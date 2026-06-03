@@ -32,6 +32,16 @@ The current test suite uses `unittest`:
 python3 -m unittest discover -v
 ```
 
+Integration tests hit real APIs and are skipped when credentials are missing:
+
+```bash
+# Run only integration tests (requires API key)
+SEMANTIC_SCHOLAR_API_KEYS=your_key python3 -m unittest tests.test_archive_integration -v
+
+# Run all tests (unit tests pass offline, integration tests skip)
+python3 -m unittest discover -v
+```
+
 ## Refactor Rules
 
 - Keep behavior stable unless a spec explicitly says otherwise.

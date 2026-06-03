@@ -49,12 +49,16 @@ Last checked on 2026-06-03 from this workspace:
 python3 -m unittest discover -v
 ```
 
-Result: `Ran 31 tests in 1.564s - OK`.
+Result: `Ran 42 tests in 1.329s - OK`.
 
 Warnings seen during tests:
 
 - `RequestsDependencyWarning` about urllib3/chardet/charset_normalizer versions.
 - `paperscraper.load_dumps` warnings that biorxiv/chemrxiv/medrxiv dumps are missing.
+
+Unit tests (mock-based): `tests/test_archive.py` — HistoricalCrawler, ArchiveSearcher, schema migration.
+Integration tests (real API): `tests/test_archive_integration.py` — skips if `SEMANTIC_SCHOLAR_API_KEYS` not set.
+Run integration tests: `SEMANTIC_SCHOLAR_API_KEYS=your_key python3 -m unittest tests.test_archive_integration -v`
 
 ## Working Constraints
 

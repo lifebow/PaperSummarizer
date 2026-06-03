@@ -79,6 +79,16 @@ class ProjectHarnessTests(unittest.TestCase):
         self.assertIn("Backward compatibility", test_matrix)
         self.assertIn("Refactor safety", test_matrix)
 
+    def test_integration_test_files_exist(self):
+        test_dir = ROOT / "tests"
+        integration_files = list(test_dir.glob("test_*_integration.py"))
+        self.assertGreater(len(integration_files), 0, "No integration test files found")
+
+        for f in integration_files:
+            content = f.read_text(encoding="utf-8")
+            self.assertIn("requires_s2_api", content, f"{f.name} missing API key check")
+            self.assertIn("SkipTest", content, f"{f.name} missing skip mechanism")
+
 
 if __name__ == "__main__":
     unittest.main()
