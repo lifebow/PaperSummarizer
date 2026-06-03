@@ -31,7 +31,8 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 - `paper_radar/digest.py`: Markdown digest and Telegram recap rendering.
 - `paper_radar/telegram.py`: Telegram Bot API sender.
 - `paper_radar/daemon.py`: `PaperRadarService` orchestration, `run_once`, daily recap, watch loop.
-- `paper_radar/cli.py`: argparse CLI with `--run-once` and `--send-recap`.
+- `paper_radar/cli.py`: argparse CLI with `--run-once`, `--send-recap`, `archive-crawl`, and `archive-search`.
+- `paper_radar/archive.py`: HistoricalCrawler (S2 bulk search), ArchiveSearcher (SQLite LIKE), RateLimiter.
 
 ## Existing Docs
 
@@ -97,6 +98,26 @@ Paused state:
   2. bounded eager,
   3. filtered lazy.
 
+## Historical Crawl Status
+
+Implemented v1 of the historical archive feature (commit `2162aaf`):
+
+- `paper_radar/archive.py`: HistoricalCrawler (S2 bulk search) + ArchiveSearcher (SQLite LIKE)
+- CLI commands: `paper-radar archive-crawl` and `paper-radar archive-search`
+- Schema: added `primary_category` + `archive_status` columns, WAL mode, indexes
+- 42 tests pass (31 original + 10 archive unit + 1 harness)
+- Integration tests in `tests/test_archive_integration.py` (skip if no API key)
+- Docker container builds and shows archive subcommands
+
+Deferred from v1 (per judge decision):
+- `paper_versions` table (version tracking)
+- `paper_texts` table (full text storage)
+- `paper_embeddings` table (vector search)
+- `paper_scores` table (enrichment scoring)
+- `paper_summaries` table (LLM summaries)
+- `enrichment_jobs` queue (pipeline orchestration)
+- `saved_filters` table (named searches)
+
 ## Harness Direction
 
 User selected approach 1 for the development harness:
@@ -119,7 +140,7 @@ Implemented development harness:
 - Development workflow docs added in `docs/development.md`.
 - Light Ruff-driven refactor applied without intended behavior changes.
 
-Current verification: 31 tests pass, ruff check passes, ruff format passes.
+Current verification: 42 tests pass, ruff check passes, ruff format passes.
 
 ### OpenCode Config (`opencode.json`)
 
