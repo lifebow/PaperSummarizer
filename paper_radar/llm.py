@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
-import ssl
-import urllib.request
+import logging
 from collections.abc import Callable
 from typing import Any
+
+from ._http import USER_AGENT, json_post
+
+logger = logging.getLogger(__name__)
 
 
 class LlmClient:
@@ -19,7 +22,7 @@ class LlmClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
-        self.http_post = http_post or _json_post
+        self.http_post = http_post or json_post
 
     def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         response = self.http_post(
@@ -27,7 +30,7 @@ class LlmClient:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "paper-radar/0.1",
+                "User-Agent": USER_AGENT,
             },
             payload={
                 "model": self.model,
@@ -104,13 +107,6 @@ def build_qa_prompt(summary: dict[str, Any], abstract: str, full_text_markdown: 
     return system, user
 
 
-def _json_post(url: str, *, headers: dict[str, str], payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
 def _extract_json_object(content: str) -> dict[str, Any]:
     stripped = content.strip()
     if stripped.startswith("```"):
@@ -128,12 +124,3 @@ def _extract_json_object(content: str) -> dict[str, Any]:
         if start != -1 and end != -1 and end > start:
             return json.loads(stripped[start : end + 1])
         raise
-
-
-def _ssl_context() -> ssl.SSLContext:
-    try:
-        import certifi  # type: ignore
-
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        return ssl.create_default_context()

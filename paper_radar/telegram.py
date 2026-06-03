@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import json
-import urllib.parse
-import urllib.request
+import logging
 from collections.abc import Callable
 from typing import Any
+
+from ._http import post_form
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramSender:
@@ -17,7 +19,7 @@ class TelegramSender:
     ):
         self.bot_token = bot_token
         self.chat_id = chat_id
-        self.http_post = http_post or _post_form
+        self.http_post = http_post or post_form
 
     def send_message(self, text: str) -> None:
         if not text.strip():
@@ -29,10 +31,3 @@ class TelegramSender:
         )
         if response.get("ok") is False:
             raise RuntimeError(f"Telegram send failed: {response}")
-
-
-def _post_form(url: str, *, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-    data = urllib.parse.urlencode(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=data, method="POST")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))

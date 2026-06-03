@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import logging
 import time
-from datetime import datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
+from ._time import default_since, local_now, now_utc_iso
 from .config import AppConfig
 from .db import PaperRadarDb
 from .digest import append_digest_batch, render_telegram_recap
@@ -12,6 +12,8 @@ from .extraction import PdfExtractor, process_pdf_with_cleanup
 from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, passes_quality_gate
 from .retrieval import PdfDownloader, make_default_retriever
 from .telegram import TelegramSender
+
+logger = logging.getLogger(__name__)
 
 
 class DefaultPaperLlm:
@@ -60,10 +62,10 @@ class PaperRadarService:
     def run_once(self, *, now_date: str | None = None, now_time: str | None = None) -> dict[str, int]:
         self.db.initialize()
         run_id = self.db.start_run()
-        since = self.db.get_state("last_successful_fetch_at") or _default_since(
+        since = self.db.get_state("last_successful_fetch_at") or default_since(
             self.config.daemon.first_run_lookback_hours
         )
-        now = _local_now(self.config.daemon.timezone)
+        now = local_now(self.config.daemon.timezone)
         digest_date = now_date or now.strftime("%Y-%m-%d")
         batch_time = now_time or now.strftime("%H:%M")
         found_count = accepted_count = error_count = 0
@@ -143,14 +145,16 @@ class PaperRadarService:
 
                     if process_pdf_with_cleanup(pdf_path, process):
                         accepted_count += 1
-                except Exception:
+                except Exception as exc:
+                    logger.exception("Paper processing failed: %s", exc)
                     error_count += 1
             if accepted_for_digest:
                 append_digest_batch(self.config.paths.digests, digest_date, batch_time, accepted_for_digest)
-            self.db.set_state("last_successful_fetch_at", datetime.now(timezone.utc).replace(microsecond=0).isoformat())
+            self.db.set_state("last_successful_fetch_at", now_utc_iso())
             self.db.finish_run(run_id, "ok", found_count, accepted_count, error_count)
             return {"found_count": found_count, "accepted_count": accepted_count, "error_count": error_count}
-        except Exception:
+        except Exception as exc:
+            logger.exception("Run failed: %s", exc)
             self.db.finish_run(run_id, "error", found_count, accepted_count, error_count + 1)
             raise
 
@@ -172,16 +176,8 @@ class PaperRadarService:
 
     def watch(self) -> None:
         while True:
-            now = _local_now(self.config.daemon.timezone)
+            now = local_now(self.config.daemon.timezone)
             self.run_once()
             if now.strftime("%H:%M") >= self.config.daemon.daily_recap_time:
                 self.send_daily_recap(now.strftime("%Y-%m-%d"))
             time.sleep(self.config.daemon.interval_minutes * 60)
-
-
-def _default_since(hours: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=hours)).replace(microsecond=0).isoformat()
-
-
-def _local_now(timezone_name: str) -> datetime:
-    return datetime.now(ZoneInfo(timezone_name))

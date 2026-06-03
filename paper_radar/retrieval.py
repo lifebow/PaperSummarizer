@@ -1,34 +1,17 @@
 from __future__ import annotations
 
-import json
-import ssl
+import logging
 import time
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ._http import USER_AGENT, download_file, json_get, text_get
+from ._s2 import PaperMetadata, s2_item_to_paper  # noqa: F401 - re-exported
 
-@dataclass
-class PaperMetadata:
-    arxiv_id: str
-    semantic_scholar_id: str = ""
-    title: str = ""
-    authors: list[str] = field(default_factory=list)
-    abstract: str = ""
-    semantic_scholar_tldr: str = ""
-    categories: list[str] = field(default_factory=list)
-    published_at: str = ""
-    updated_at: str = ""
-    pdf_url: str = ""
-    semantic_scholar_url: str = ""
-    source: str = ""
-
-    def to_record(self) -> dict[str, Any]:
-        return asdict(self)
+logger = logging.getLogger(__name__)
 
 
 class SemanticScholarClient:
@@ -48,10 +31,9 @@ class SemanticScholarClient:
             "publicationDate",
             "externalIds",
             "openAccessPdf",
-            "fieldsOfStudy",
             "url",
         ]
-        self.http_get = http_get or _json_get
+        self.http_get = http_get or json_get
         self._next_key = 0
 
     def search(self, query: str, *, limit: int = 20, since: str | None = None) -> list[PaperMetadata]:
@@ -59,7 +41,7 @@ class SemanticScholarClient:
         if self.api_keys:
             headers["x-api-key"] = self.api_keys[self._next_key % len(self.api_keys)]
             self._next_key += 1
-        headers["User-Agent"] = "paper-radar/0.1"
+        headers["User-Agent"] = USER_AGENT
         params = {
             "query": query,
             "limit": str(limit),
@@ -74,7 +56,7 @@ class SemanticScholarClient:
             headers=headers,
             timeout=60,
         )
-        return [paper for paper in (_s2_to_paper(item) for item in payload.get("data", [])) if paper]
+        return [paper for paper in (s2_item_to_paper(item) for item in payload.get("data", [])) if paper]
 
 
 class ArxivClient:
@@ -83,7 +65,7 @@ class ArxivClient:
     ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 
     def __init__(self, *, http_get_text: Callable[..., str] | None = None):
-        self.http_get_text = http_get_text or _text_get
+        self.http_get_text = http_get_text or text_get
         self._last_request_at = 0.0
 
     def search_recent(self, categories: list[str], *, since: str, limit: int = 20) -> list[PaperMetadata]:
@@ -156,7 +138,8 @@ class HybridRetriever:
                 merged[paper.arxiv_id] = paper
         try:
             arxiv_papers = self.arxiv_search(categories, since, limit)
-        except Exception:
+        except Exception as exc:
+            logger.warning("ArXiv search failed: %s", exc)
             arxiv_papers = []
         for paper in arxiv_papers:
             if paper.arxiv_id:
@@ -172,7 +155,7 @@ class PdfDownloader:
         http_download: Callable[[str, Path], None] | None = None,
         paperscraper_download: Callable[[str, Path], bool] | None = None,
     ):
-        self.http_download = http_download or _download_file
+        self.http_download = http_download or _download_file_wrapper
         self.paperscraper_download = paperscraper_download or _download_with_paperscraper
 
     def download(self, paper: PaperMetadata, tmp_dir: Path) -> Path:
@@ -206,25 +189,6 @@ def make_default_retriever(api_keys: list[str], fields: list[str]) -> HybridRetr
     )
 
 
-def _s2_to_paper(item: dict[str, Any]) -> PaperMetadata | None:
-    external_ids = item.get("externalIds") or {}
-    arxiv_id = external_ids.get("ArXiv") or external_ids.get("ARXIV")
-    if not arxiv_id:
-        return None
-    open_access = item.get("openAccessPdf") or {}
-    return PaperMetadata(
-        arxiv_id=arxiv_id,
-        semantic_scholar_id=item.get("paperId", ""),
-        title=item.get("title", "") or "",
-        abstract=item.get("abstract", "") or "",
-        semantic_scholar_tldr="",
-        published_at=item.get("publicationDate", "") or "",
-        pdf_url=open_access.get("url", "") if isinstance(open_access, dict) else "",
-        semantic_scholar_url=item.get("url", "") or "",
-        source="semantic_scholar",
-    )
-
-
 def _merge_s2_with_arxiv(s2: PaperMetadata | None, arxiv: PaperMetadata) -> PaperMetadata:
     if s2 is None:
         return arxiv
@@ -244,23 +208,8 @@ def _merge_s2_with_arxiv(s2: PaperMetadata | None, arxiv: PaperMetadata) -> Pape
     )
 
 
-def _json_get(url: str, *, params: dict[str, str], headers: dict[str, str], timeout: int) -> dict[str, Any]:
-    query = urllib.parse.urlencode(params)
-    request = urllib.request.Request(f"{url}?{query}", headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def _text_get(url: str, *, timeout: int) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "paper-radar/0.1"})
-    with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
-        return response.read().decode("utf-8")
-
-
-def _download_file(url: str, dest: Path) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "paper-radar/0.1"})
-    with urllib.request.urlopen(request, timeout=120, context=_ssl_context()) as response:
-        dest.write_bytes(response.read())
+def _download_file_wrapper(url: str, dest: Path) -> None:
+    download_file(url, str(dest))
 
 
 def _download_with_paperscraper(arxiv_id: str, dest: Path) -> bool:
@@ -284,12 +233,3 @@ def _download_with_paperscraper(arxiv_id: str, dest: Path) -> bool:
 def _entry_text(entry: ET.Element, path: str) -> str:
     element = entry.find(path)
     return (element.text or "").strip() if element is not None else ""
-
-
-def _ssl_context() -> ssl.SSLContext:
-    try:
-        import certifi  # type: ignore
-
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        return ssl.create_default_context()

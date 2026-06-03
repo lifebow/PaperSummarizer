@@ -3,8 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from paper_radar._http import ssl_context
 from paper_radar.digest import append_digest_batch, render_paper_markdown
-from paper_radar.llm import LlmClient, _extract_json_object, _ssl_context, passes_quality_gate
+from paper_radar.llm import LlmClient, _extract_json_object, passes_quality_gate
 
 
 class LlmDigestTests(unittest.TestCase):
@@ -35,7 +36,7 @@ class LlmDigestTests(unittest.TestCase):
         self.assertEqual(_extract_json_object(text)["relevance_score"], 8)
 
     def test_ssl_context_is_available_for_provider_requests(self):
-        self.assertIsNotNone(_ssl_context())
+        self.assertIsNotNone(ssl_context())
 
     def test_render_paper_markdown_includes_background_math_and_ideas(self):
         markdown = render_paper_markdown(

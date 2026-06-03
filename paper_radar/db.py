@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from ._time import now_utc_iso
+
+logger = logging.getLogger(__name__)
 
 
 class PaperRadarDb:
@@ -104,7 +108,7 @@ class PaperRadarDb:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_primary_category ON papers(primary_category)")
 
     def upsert_paper(self, paper: dict[str, Any]) -> int:
-        now = _now()
+        now = now_utc_iso()
         arxiv_id = paper.get("arxiv_id", "")
         existing = self.get_paper_by_arxiv_id(arxiv_id) if arxiv_id else None
         values = {
@@ -169,7 +173,7 @@ class PaperRadarDb:
 
     def start_run(self) -> int:
         with self._connect() as conn:
-            cursor = conn.execute("INSERT INTO runs (started_at) VALUES (?)", (_now(),))
+            cursor = conn.execute("INSERT INTO runs (started_at) VALUES (?)", (now_utc_iso(),))
             return int(cursor.lastrowid)
 
     def finish_run(self, run_id: int, status: str, found_count: int, accepted_count: int, error_count: int) -> None:
@@ -180,7 +184,7 @@ class PaperRadarDb:
                 SET finished_at=?, status=?, found_count=?, accepted_count=?, error_count=?
                 WHERE id=?
                 """,
-                (_now(), status, found_count, accepted_count, error_count, run_id),
+                (now_utc_iso(), status, found_count, accepted_count, error_count, run_id),
             )
 
     def record_result(
@@ -221,7 +225,7 @@ class PaperRadarDb:
                     qa_reason,
                     1 if accepted else 0,
                     digest_date,
-                    _now(),
+                    now_utc_iso(),
                 ),
             )
             return int(cursor.lastrowid)
@@ -257,7 +261,7 @@ class PaperRadarDb:
         return bool(row and row["status"] == "sent")
 
     def mark_recap(self, digest_date: str, status: str, error: str = "") -> None:
-        sent_at = _now() if status == "sent" else ""
+        sent_at = now_utc_iso() if status == "sent" else ""
         with self._connect() as conn:
             conn.execute(
                 """
@@ -296,7 +300,7 @@ class PaperRadarDb:
         extraction_error: str = "",
         extractor_name: str = "",
     ) -> None:
-        now = _now()
+        now = now_utc_iso()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -340,7 +344,3 @@ class PaperRadarDb:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()

@@ -1,12 +1,12 @@
-import tempfile
 import unittest
-from pathlib import Path
 
-from paper_radar.db import PaperRadarDb
-from paper_radar.enrichment import ArchiveEnricher, extract_introduction, extract_text_from_pdf
+from paper_radar.enrichment import ArchiveEnricher
+from paper_radar.extraction import extract_introduction, extract_text_from_pdf_bytes
+
+from tests.helpers import TempDbMixin
 
 
-class EnrichmentTests(unittest.TestCase):
+class EnrichmentTests(unittest.TestCase, TempDbMixin):
     def test_extract_introduction_with_heading(self):
         text = """
 Abstract
@@ -58,88 +58,78 @@ Background section.
             pdf_bytes = doc.tobytes()
             doc.close()
 
-            text = extract_text_from_pdf(pdf_bytes)
+            text = extract_text_from_pdf_bytes(pdf_bytes)
             self.assertIn("Hello World", text)
             self.assertIn("Test content", text)
         except ImportError:
             self.skipTest("pymupdf not available")
 
     def test_db_paper_texts_schema(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
-            db.initialize()
+        db = self.make_db()
+        paper_id = db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test"})
+        db.upsert_paper_text(
+            paper_id,
+            full_text="Full text here",
+            introduction_text="Introduction here",
+            extraction_status="extracted",
+            extractor_name="pymupdf",
+        )
 
-            paper_id = db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test"})
-            db.upsert_paper_text(
-                paper_id,
-                full_text="Full text here",
-                introduction_text="Introduction here",
-                extraction_status="extracted",
-                extractor_name="pymupdf",
-            )
-
-            paper_text = db.get_paper_text(paper_id)
-            self.assertIsNotNone(paper_text)
-            self.assertEqual(paper_text["full_text"], "Full text here")
-            self.assertEqual(paper_text["introduction_text"], "Introduction here")
-            self.assertEqual(paper_text["extraction_status"], "extracted")
+        paper_text = db.get_paper_text(paper_id)
+        self.assertIsNotNone(paper_text)
+        self.assertEqual(paper_text["full_text"], "Full text here")
+        self.assertEqual(paper_text["introduction_text"], "Introduction here")
+        self.assertEqual(paper_text["extraction_status"], "extracted")
+        self.cleanup_db()
 
     def test_db_papers_needing_extraction(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
-            db.initialize()
+        db = self.make_db()
+        db.upsert_paper({"arxiv_id": "2501.00001", "title": "Paper 1"})
+        db.upsert_paper({"arxiv_id": "2501.00002", "title": "Paper 2"})
 
-            db.upsert_paper({"arxiv_id": "2501.00001", "title": "Paper 1"})
-            db.upsert_paper({"arxiv_id": "2501.00002", "title": "Paper 2"})
+        needing = db.papers_needing_extraction()
+        self.assertEqual(len(needing), 2)
 
-            needing = db.papers_needing_extraction()
-            self.assertEqual(len(needing), 2)
+        paper_id = db.upsert_paper({"arxiv_id": "2501.00001", "title": "Paper 1"})
+        db.upsert_paper_text(paper_id, extraction_status="extracted")
 
-            paper_id = db.upsert_paper({"arxiv_id": "2501.00001", "title": "Paper 1"})
-            db.upsert_paper_text(paper_id, extraction_status="extracted")
-
-            needing = db.papers_needing_extraction()
-            self.assertEqual(len(needing), 1)
-            self.assertEqual(needing[0]["arxiv_id"], "2501.00002")
+        needing = db.papers_needing_extraction()
+        self.assertEqual(len(needing), 1)
+        self.assertEqual(needing[0]["arxiv_id"], "2501.00002")
+        self.cleanup_db()
 
     def test_enricher_dry_run(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
-            db.initialize()
+        db = self.make_db()
+        db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test", "pdf_url": ""})
 
-            db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test", "pdf_url": ""})
+        enricher = ArchiveEnricher(db)
+        results = enricher.run_batch(limit=10, dry_run=True)
 
-            enricher = ArchiveEnricher(db)
-            results = enricher.run_batch(limit=10, dry_run=True)
-
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].status, "dry_run")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status, "dry_run")
+        self.cleanup_db()
 
     def test_enricher_no_pdf_url(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
-            db.initialize()
+        db = self.make_db()
+        db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test", "pdf_url": ""})
 
-            db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test", "pdf_url": ""})
+        enricher = ArchiveEnricher(db)
+        results = enricher.run_batch(limit=10)
 
-            enricher = ArchiveEnricher(db)
-            results = enricher.run_batch(limit=10)
-
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].status, "no_pdf_url")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status, "no_pdf_url")
+        self.cleanup_db()
 
     def test_enricher_skips_already_extracted(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
-            db.initialize()
+        db = self.make_db()
+        paper_id = db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test", "pdf_url": ""})
+        db.upsert_paper_text(paper_id, extraction_status="extracted")
 
-            paper_id = db.upsert_paper({"arxiv_id": "2501.00001", "title": "Test", "pdf_url": ""})
-            db.upsert_paper_text(paper_id, extraction_status="extracted")
+        enricher = ArchiveEnricher(db)
+        results = enricher.run_batch(limit=10)
 
-            enricher = ArchiveEnricher(db)
-            results = enricher.run_batch(limit=10)
-
-            self.assertEqual(len(results), 0)
+        self.assertEqual(len(results), 0)
+        self.cleanup_db()
 
 
 if __name__ == "__main__":

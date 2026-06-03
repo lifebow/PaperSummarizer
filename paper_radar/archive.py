@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from ._http import USER_AGENT, json_get
+from ._s2 import s2_item_to_paper
 from .db import PaperRadarDb
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimiter:
@@ -102,7 +105,7 @@ class HistoricalCrawler:
             if self.api_keys:
                 headers["x-api-key"] = self.api_keys[self._next_key % len(self.api_keys)]
                 self._next_key += 1
-            headers["User-Agent"] = "paper-radar/0.1"
+            headers["User-Agent"] = USER_AGENT
 
             params: dict[str, str] = {
                 "query": "*",
@@ -116,7 +119,8 @@ class HistoricalCrawler:
             self.rate_limiter.wait()
             try:
                 payload = self._fetch(params, headers)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Crawl fetch failed for year %d: %s", year, exc)
                 break
 
             data = payload.get("data", [])
@@ -124,11 +128,13 @@ class HistoricalCrawler:
                 break
 
             for item in data:
-                paper = self._item_to_record(item)
-                if paper and paper.get("arxiv_id"):
-                    if categories and paper.get("primary_category") not in categories:
+                paper_meta = s2_item_to_paper(item, include_fields_of_study=True)
+                if paper_meta and paper_meta.arxiv_id:
+                    if categories and paper_meta.primary_category not in categories:
                         continue
-                    self.db.upsert_paper(paper)
+                    record = paper_meta.to_record()
+                    record["archive_status"] = "metadata_only"
+                    self.db.upsert_paper(record)
                     year_upserted += 1
             year_found += len(data)
 
@@ -141,49 +147,7 @@ class HistoricalCrawler:
         return year_found, year_upserted, None
 
     def _fetch(self, params: dict[str, str], headers: dict[str, str]) -> dict[str, Any]:
-        query = urllib.parse.urlencode(params)
-        request = urllib.request.Request(f"{self.S2_BULK_URL}?{query}", headers=headers)
-        import ssl
-
-        ctx = ssl.create_default_context()
-        try:
-            import certifi  # type: ignore
-
-            ctx = ssl.create_default_context(cafile=certifi.where())
-        except Exception:
-            pass
-        with urllib.request.urlopen(request, timeout=60, context=ctx) as response:
-            return json.loads(response.read().decode("utf-8"))
-
-    def _item_to_record(self, item: dict[str, Any]) -> dict[str, Any] | None:
-        external_ids = item.get("externalIds") or {}
-        arxiv_id = external_ids.get("ArXiv") or external_ids.get("ARXIV")
-        if not arxiv_id:
-            return None
-
-        open_access = item.get("openAccessPdf") or {}
-        tldr = item.get("tldr") or {}
-        fields_of_study = item.get("fieldsOfStudy") or []
-        primary_category = ""
-        if fields_of_study:
-            primary_category = fields_of_study[0] if isinstance(fields_of_study[0], str) else ""
-
-        return {
-            "arxiv_id": arxiv_id,
-            "semantic_scholar_id": item.get("paperId", ""),
-            "title": item.get("title", "") or "",
-            "authors": [],
-            "abstract": item.get("abstract", "") or "",
-            "semantic_scholar_tldr": tldr.get("text", "") if isinstance(tldr, dict) else "",
-            "categories": [f for f in fields_of_study if isinstance(f, str)],
-            "primary_category": primary_category,
-            "published_at": item.get("publicationDate", "") or "",
-            "updated_at": "",
-            "pdf_url": open_access.get("url", "") if isinstance(open_access, dict) else "",
-            "semantic_scholar_url": item.get("url", "") or "",
-            "source": "semantic_scholar",
-            "archive_status": "metadata_only",
-        }
+        return json_get(self.S2_BULK_URL, params=params, headers=headers, timeout=60)
 
 
 @dataclass

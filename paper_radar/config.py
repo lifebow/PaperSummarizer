@@ -40,8 +40,6 @@ class SemanticScholarConfig:
     enabled: bool = True
     api_keys: list[str] = field(default_factory=list)
     api_key_env: str = "SEMANTIC_SCHOLAR_API_KEYS"
-    require_arxiv_external_id: bool = True
-    arxiv_freshness_reconciliation: bool = True
     fields: list[str] = field(default_factory=list)
 
 
@@ -115,8 +113,6 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
             enabled=bool(s2.get("enabled", True)),
             api_keys=_split_keys(_env(s2_key_env, env_values)),
             api_key_env=s2_key_env,
-            require_arxiv_external_id=bool(s2.get("require_arxiv_external_id", True)),
-            arxiv_freshness_reconciliation=bool(s2.get("arxiv_freshness_reconciliation", True)),
             fields=list(s2.get("fields", [])),
         ),
         llm=LlmConfig(

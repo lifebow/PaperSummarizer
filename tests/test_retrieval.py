@@ -2,7 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from paper_radar.retrieval import HybridRetriever, PaperMetadata, PdfDownloader, SemanticScholarClient, _ssl_context
+from paper_radar._http import ssl_context
+from paper_radar.retrieval import HybridRetriever, PaperMetadata, PdfDownloader, SemanticScholarClient
 
 
 class RetrievalTests(unittest.TestCase):
@@ -50,7 +51,7 @@ class RetrievalTests(unittest.TestCase):
         SemanticScholarClient(api_keys=["k1"], http_get=fake_get).search("LLM agent")
 
         self.assertIn("User-Agent", captured["headers"])
-        self.assertIsNotNone(_ssl_context())
+        self.assertIsNotNone(ssl_context())
 
     def test_semantic_scholar_requests_recent_results_sorted_by_publication_date(self):
         captured = {}

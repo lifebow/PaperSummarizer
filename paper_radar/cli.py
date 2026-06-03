@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import os
+import logging
 import sys
 
 from .archive import ArchiveSearcher, HistoricalCrawler, RateLimiter
@@ -10,6 +10,15 @@ from .daemon import DefaultPaperLlm, PaperRadarService
 from .db import PaperRadarDb
 from .enrichment import ArchiveEnricher
 from .llm import LlmClient
+
+logger = logging.getLogger(__name__)
+
+
+def _get_db(args) -> PaperRadarDb:
+    config = load_config(args.config, args.env)
+    db = PaperRadarDb(config.paths.database)
+    db.initialize()
+    return db
 
 
 def main() -> None:
@@ -68,8 +77,8 @@ def main() -> None:
 
 
 def _handle_archive_crawl(args: argparse.Namespace) -> None:
-    api_keys_str = os.environ.get("SEMANTIC_SCHOLAR_API_KEYS", "")
-    api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()]
+    config = load_config(args.config, args.env)
+    api_keys = config.semantic_scholar.api_keys
     if not api_keys:
         print(
             "Warning: No SEMANTIC_SCHOLAR_API_KEYS set. Using unauthenticated requests (rate limited).",
@@ -77,9 +86,7 @@ def _handle_archive_crawl(args: argparse.Namespace) -> None:
         )
         api_keys = [""]
 
-    db_path = os.environ.get("PAPER_RADAR_DB", "data/radar.sqlite3")
-    db = PaperRadarDb(db_path)
-    db.initialize()
+    db = _get_db(args)
 
     categories = None
     if args.categories:
@@ -100,9 +107,7 @@ def _handle_archive_crawl(args: argparse.Namespace) -> None:
 
 
 def _handle_archive_search(args: argparse.Namespace) -> None:
-    db_path = os.environ.get("PAPER_RADAR_DB", "data/radar.sqlite3")
-    db = PaperRadarDb(db_path)
-    db.initialize()
+    db = _get_db(args)
 
     searcher = ArchiveSearcher(db)
     results = searcher.search(
@@ -126,9 +131,7 @@ def _handle_archive_search(args: argparse.Namespace) -> None:
 
 
 def _handle_enrich(args: argparse.Namespace) -> None:
-    db_path = os.environ.get("PAPER_RADAR_DB", "data/radar.sqlite3")
-    db = PaperRadarDb(db_path)
-    db.initialize()
+    db = _get_db(args)
 
     enricher = ArchiveEnricher(db)
     results = enricher.run_batch(limit=args.limit, dry_run=args.dry_run)
