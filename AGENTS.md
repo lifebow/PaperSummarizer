@@ -47,10 +47,12 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 Last checked on 2026-06-03 from this workspace:
 
 ```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
 python3 -m unittest discover -v
 ```
 
-Result: `Ran 42 tests in 1.329s - OK`.
+Result: `Ran 60 tests in 1.334s - OK (skipped=8)`.
 
 Warnings seen during tests:
 
@@ -58,8 +60,9 @@ Warnings seen during tests:
 - `paperscraper.load_dumps` warnings that biorxiv/chemrxiv/medrxiv dumps are missing.
 
 Unit tests (mock-based): `tests/test_archive.py` — HistoricalCrawler, ArchiveSearcher, schema migration.
+Unit tests (mock-based): `tests/test_enrichment.py` — extract_introduction, extract_text_from_pdf, db schema, enricher batch.
 Integration tests (real API): `tests/test_archive_integration.py` — skips if `SEMANTIC_SCHOLAR_API_KEYS` not set.
-Integration tests (real API): `tests/test_llm_integration.py` — skips if `OPENAI_*` env vars not set.
+Integration tests (real API): `tests/test_enrichment.py` — skips if no network/PDF access.
 Run integration tests: `SEMANTIC_SCHOLAR_API_KEYS=your_key python3 -m unittest tests.test_archive_integration -v`
 Run LLM integration tests: `OPENAI_BASE_URL=... OPENAI_API_KEY=... OPENAI_MODEL=... python3 -m unittest tests.test_llm_integration -v`
 
@@ -110,6 +113,18 @@ Implemented v1 of the historical archive feature (commit `2162aaf`):
 - 42 tests pass (31 original + 10 archive unit + 1 harness)
 - Integration tests in `tests/test_archive_integration.py` (skip if no API key)
 - Docker container builds and shows archive subcommands
+
+## Enrichment Pipeline Status
+
+Implemented enrichment pipeline v1 (commit `9f22680`):
+
+- `paper_radar/enrichment.py`: ArchiveEnricher, extract_text_from_pdf (PyMuPDF), extract_introduction
+- Schema: added `paper_texts` table for extracted text storage
+- CLI command: `paper-radar enrich` with `--limit` and `--dry-run`
+- 60 tests pass (42 original + 10 enrichment tests + 8 integration tests)
+- Integration tests in `tests/test_enrichment.py` (skip if no API key)
+- Introduction detection: regex heading patterns + bounded-prefix fallback
+- Tested with real paper: arxiv.org/pdf/2606.03988 (97K chars, 3K intro extracted)
 
 Deferred from v1 (per judge decision):
 - `paper_versions` table (version tracking)
