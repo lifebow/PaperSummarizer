@@ -86,7 +86,8 @@ class ProjectHarnessTests(unittest.TestCase):
 
         for f in integration_files:
             content = f.read_text(encoding="utf-8")
-            self.assertIn("requires_s2_api", content, f"{f.name} missing API key check")
+            has_api_check = "requires_s2_api" in content or "requires_llm_api" in content
+            self.assertTrue(has_api_check, f"{f.name} missing API key check decorator")
             self.assertIn("SkipTest", content, f"{f.name} missing skip mechanism")
 
 

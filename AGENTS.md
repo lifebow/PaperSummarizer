@@ -59,7 +59,9 @@ Warnings seen during tests:
 
 Unit tests (mock-based): `tests/test_archive.py` — HistoricalCrawler, ArchiveSearcher, schema migration.
 Integration tests (real API): `tests/test_archive_integration.py` — skips if `SEMANTIC_SCHOLAR_API_KEYS` not set.
+Integration tests (real API): `tests/test_llm_integration.py` — skips if `OPENAI_*` env vars not set.
 Run integration tests: `SEMANTIC_SCHOLAR_API_KEYS=your_key python3 -m unittest tests.test_archive_integration -v`
+Run LLM integration tests: `OPENAI_BASE_URL=... OPENAI_API_KEY=... OPENAI_MODEL=... python3 -m unittest tests.test_llm_integration -v`
 
 ## Working Constraints
 
