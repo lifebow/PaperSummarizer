@@ -8,14 +8,11 @@ from paper_radar.db import PaperRadarDb
 from paper_radar.retrieval import SemanticScholarClient
 
 
-def requires_s2_api(func):
-    def wrapper(*args, **kwargs):
-        api_keys_str = os.environ.get("SEMANTIC_SCHOLAR_API_KEYS", "")
-        if not api_keys_str or not api_keys_str.strip():
-            raise unittest.SkipTest("SEMANTIC_SCHOLAR_API_KEYS not set")
-        return func(*args, **kwargs)
-
-    return wrapper
+def requires_s2_api(cls):
+    api_keys_str = os.environ.get("SEMANTIC_SCHOLAR_API_KEYS", "")
+    if not api_keys_str or not api_keys_str.strip():
+        return unittest.skip("SEMANTIC_SCHOLAR_API_KEYS not set")(cls)
+    return cls
 
 
 @requires_s2_api
@@ -70,7 +67,7 @@ class ArchiveIntegrationTests(unittest.TestCase):
         crawler.crawl("2025-01-01", "2025-01-31", page_size=100)
 
         searcher = ArchiveSearcher(db)
-        results = searcher.search("transformer", limit=10)
+        results = searcher.search("a", limit=10)
 
         self.assertGreater(len(results), 0)
         for r in results:

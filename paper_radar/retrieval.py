@@ -48,7 +48,6 @@ class SemanticScholarClient:
             "publicationDate",
             "externalIds",
             "openAccessPdf",
-            "tldr",
             "fieldsOfStudy",
             "url",
         ]
@@ -213,13 +212,12 @@ def _s2_to_paper(item: dict[str, Any]) -> PaperMetadata | None:
     if not arxiv_id:
         return None
     open_access = item.get("openAccessPdf") or {}
-    tldr = item.get("tldr") or {}
     return PaperMetadata(
         arxiv_id=arxiv_id,
         semantic_scholar_id=item.get("paperId", ""),
         title=item.get("title", "") or "",
         abstract=item.get("abstract", "") or "",
-        semantic_scholar_tldr=tldr.get("text", "") if isinstance(tldr, dict) else "",
+        semantic_scholar_tldr="",
         published_at=item.get("publicationDate", "") or "",
         pdf_url=open_access.get("url", "") if isinstance(open_access, dict) else "",
         semantic_scholar_url=item.get("url", "") or "",

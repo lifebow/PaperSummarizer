@@ -107,11 +107,9 @@ class HistoricalCrawler:
             params: dict[str, str] = {
                 "query": "*",
                 "limit": str(page_size),
-                "fields": "title,abstract,publicationDate,externalIds,openAccessPdf,tldr,fieldsOfStudy,url",
+                "fields": "title,abstract,publicationDate,externalIds,openAccessPdf,fieldsOfStudy,url",
                 "publicationDateOrYear": f"{year}-01-01:{year}-12-31",
             }
-            if categories:
-                params["fieldsOfStudy"] = ",".join(categories)
             if cursor:
                 params["cursor"] = cursor
 
@@ -128,6 +126,8 @@ class HistoricalCrawler:
             for item in data:
                 paper = self._item_to_record(item)
                 if paper and paper.get("arxiv_id"):
+                    if categories and paper.get("primary_category") not in categories:
+                        continue
                     self.db.upsert_paper(paper)
                     year_upserted += 1
             year_found += len(data)
