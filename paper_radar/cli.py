@@ -8,6 +8,7 @@ from .archive import ArchiveSearcher, HistoricalCrawler, RateLimiter
 from .config import load_config
 from .daemon import DefaultPaperLlm, PaperRadarService
 from .db import PaperRadarDb
+from .enrichment import ArchiveEnricher
 from .llm import LlmClient
 
 
@@ -32,6 +33,10 @@ def main() -> None:
     archive_search.add_argument("--category", help="Filter by primary category")
     archive_search.add_argument("--limit", type=int, default=50, help="Max results")
 
+    enrich = subparsers.add_parser("enrich", help="Extract text and introduction from archived papers")
+    enrich.add_argument("--limit", type=int, default=50, help="Max papers to process")
+    enrich.add_argument("--dry-run", action="store_true", help="Show what would be processed")
+
     parser.add_argument("--run-once", action="store_true", help="Run one batch and exit.")
     parser.add_argument("--send-recap", help="Send recap for YYYY-MM-DD and exit.")
     args = parser.parse_args()
@@ -41,6 +46,9 @@ def main() -> None:
         return
     if args.command == "archive-search":
         _handle_archive_search(args)
+        return
+    if args.command == "enrich":
+        _handle_enrich(args)
         return
 
     config = load_config(args.config, args.env)
@@ -115,6 +123,33 @@ def _handle_archive_search(args: argparse.Namespace) -> None:
         print(f"   arXiv: https://arxiv.org/abs/{r.arxiv_id}")
         print(f"   Category: {r.primary_category}")
         print()
+
+
+def _handle_enrich(args: argparse.Namespace) -> None:
+    db_path = os.environ.get("PAPER_RADAR_DB", "data/radar.sqlite3")
+    db = PaperRadarDb(db_path)
+    db.initialize()
+
+    enricher = ArchiveEnricher(db)
+    results = enricher.run_batch(limit=args.limit, dry_run=args.dry_run)
+
+    if not results:
+        print("No papers to enrich.")
+        return
+
+    extracted = sum(1 for r in results if r.status == "extracted")
+    errors = sum(1 for r in results if r.status == "error")
+    skipped = sum(1 for r in results if r.status in ("no_pdf_url", "empty_text"))
+
+    print(f"Enrichment complete: {extracted} extracted, {errors} errors, {skipped} skipped")
+
+    for r in results[:10]:
+        status_icon = "✓" if r.status == "extracted" else "✗" if r.status == "error" else "○"
+        intro_len = len(r.introduction_text)
+        print(f"  {status_icon} {r.arxiv_id}: {r.status} (intro: {intro_len} chars)")
+
+    if len(results) > 10:
+        print(f"  ... and {len(results) - 10} more")
 
 
 def require_llm_config(config) -> None:

@@ -77,6 +77,17 @@ class PaperRadarDb:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS paper_texts (
+                    paper_id INTEGER PRIMARY KEY,
+                    full_text TEXT NOT NULL DEFAULT '',
+                    introduction_text TEXT NOT NULL DEFAULT '',
+                    extraction_status TEXT NOT NULL DEFAULT 'pending',
+                    extraction_error TEXT NOT NULL DEFAULT '',
+                    extractor_name TEXT NOT NULL DEFAULT '',
+                    extracted_at TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(paper_id) REFERENCES papers(id)
+                );
                 """
             )
             self._migrate_schema(conn)
@@ -274,6 +285,55 @@ class PaperRadarDb:
                 """,
                 (key, value),
             )
+
+    def upsert_paper_text(
+        self,
+        paper_id: int,
+        *,
+        full_text: str = "",
+        introduction_text: str = "",
+        extraction_status: str = "pending",
+        extraction_error: str = "",
+        extractor_name: str = "",
+    ) -> None:
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO paper_texts (paper_id, full_text, introduction_text,
+                    extraction_status, extraction_error, extractor_name, extracted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(paper_id) DO UPDATE SET
+                    full_text=excluded.full_text,
+                    introduction_text=excluded.introduction_text,
+                    extraction_status=excluded.extraction_status,
+                    extraction_error=excluded.extraction_error,
+                    extractor_name=excluded.extractor_name,
+                    extracted_at=excluded.extracted_at
+                """,
+                (paper_id, full_text, introduction_text, extraction_status, extraction_error, extractor_name, now),
+            )
+
+    def get_paper_text(self, paper_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM paper_texts WHERE paper_id=?", (paper_id,)).fetchone()
+        return dict(row) if row else None
+
+    def papers_needing_extraction(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.id, p.arxiv_id, p.pdf_url, p.title
+                FROM papers p
+                LEFT JOIN paper_texts pt ON pt.paper_id = p.id
+                WHERE pt.paper_id IS NULL
+                   OR pt.extraction_status = 'pending'
+                ORDER BY p.published_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
