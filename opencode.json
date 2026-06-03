@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    "docs/opencode.md",
+    "docs/workflows/README.md",
+    "docs/workflows/templates/*.md"
+  ],
+  "small_model": "opencode/deepseek-v4-flash-free",
+  "agent": {
+    "lint": {
+      "description": "Runs mechanical verification — ruff lint, ruff format check, unittest. Must not edit files.",
+      "mode": "subagent",
+      "model": "opencode/deepseek-v4-flash-free",
+      "permission": {
+        "edit": "deny",
+        "bash": "allow"
+      }
+    },
+    "implement": {
+      "description": "Implements code changes for paper-radar features. Edits Python source and test files.",
+      "mode": "subagent",
+      "model": "acbpro/glm-5.1",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      }
+    }
+  }
+}

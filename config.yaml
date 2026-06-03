@@ -1,0 +1,46 @@
+topics:
+  categories: ["cs.AI"]
+  queries:
+    - "LLM agent"
+    - "AI safety"
+    - "AI jailbreak"
+
+daemon:
+  interval_minutes: 60
+  timezone: "Asia/Ho_Chi_Minh"
+  daily_recap_time: "21:00"
+  first_run_lookback_hours: 48
+
+filters:
+  max_papers_per_batch: 20
+  relevance_threshold: 7
+  grounding_threshold: 7
+  idea_threshold: 6
+
+paths:
+  database: "data/paper_radar.sqlite3"
+  tmp_pdfs: "data/tmp_pdfs"
+  digests: "digests"
+
+semantic_scholar:
+  enabled: true
+  api_key_env: "SEMANTIC_SCHOLAR_API_KEYS"
+  require_arxiv_external_id: true
+  arxiv_freshness_reconciliation: true
+  fields:
+    - "title"
+    - "abstract"
+    - "publicationDate"
+    - "externalIds"
+    - "openAccessPdf"
+    - "fieldsOfStudy"
+    - "url"
+
+llm:
+  base_url_env: "OPENAI_BASE_URL"
+  api_key_env: "OPENAI_API_KEY"
+  model_env: "OPENAI_MODEL"
+
+telegram:
+  bot_token_env: "TELEGRAM_BOT_TOKEN"
+  chat_id_env: "TELEGRAM_CHAT_ID"
