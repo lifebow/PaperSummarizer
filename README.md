@@ -35,6 +35,37 @@ paper-radar --run-once
 paper-radar --send-recap 2026-05-29
 ```
 
+## Container Smoke
+
+```bash
+podman build -t paper-radar:latest .
+podman run --rm paper-radar:latest --help
+```
+
+Compose smoke in this workspace uses Podman Compose:
+
+```bash
+podman compose build
+podman compose run --rm paper-radar --help
+```
+
+If Docker Compose is available in another shell, the equivalent smoke command is:
+
+```bash
+docker compose run --rm paper-radar --help
+```
+
+The Dockerfile separates dependency installation from app wheel installation, so
+normal source-only edits reuse the expensive dependency layer. Avoid `--no-cache`
+unless debugging a stale build.
+
+After repeated smoke builds, clean dangling images while keeping
+`paper-radar:latest`:
+
+```bash
+podman image prune
+```
+
 ## Project Notes
 
 Current design docs and plans live under `docs/superpowers/`. See `AGENTS.md` for the latest agent handoff notes.

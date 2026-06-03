@@ -52,7 +52,8 @@ The user must provide:
 
 ## Current Project Caveats
 
-- The Codex desktop workspace currently has no `.git` directory.
-- Docker exists locally, but Docker Compose may not be installed in this
-  environment. Re-check in OpenCode.
+- This workspace now has a `.git` repository for refactor checkpoints.
+- Dockerfiles exist. Podman smoke and Podman Compose smoke work locally.
+- Docker Compose CLI specifically is not installed in this shell; use
+  `podman compose` here or re-check `docker compose` in another OpenCode shell.
 - Unit tests are offline and should stay offline.

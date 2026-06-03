@@ -25,6 +25,60 @@
         "edit": "allow",
         "bash": "allow"
       }
+    },
+    "debate-deepseek": {
+      "description": "Debate panelist using DeepSeek V4 Flash Free. Writes independent design arguments only.",
+      "mode": "subagent",
+      "model": "opencode/deepseek-v4-flash-free",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "debate-mimo": {
+      "description": "Debate panelist using Mimo V2.5 Free. Writes independent design arguments only.",
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "debate-nemotron": {
+      "description": "Debate panelist using Nemotron 3 Super Free. Writes independent design arguments only.",
+      "mode": "subagent",
+      "model": "opencode/nemotron-3-super-free",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "debate-glm": {
+      "description": "Debate panelist using GLM 5.1. Writes independent design arguments only.",
+      "mode": "subagent",
+      "model": "acbpro/glm-5.1",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "debate-gpt55": {
+      "description": "Debate panelist using GPT-5.5. Writes independent design arguments only.",
+      "mode": "subagent",
+      "model": "acbpro/gpt-5.5",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "debate-judge": {
+      "description": "Final debate judge using GPT-5.5. Compares panel arguments and writes the final decision.",
+      "mode": "subagent",
+      "model": "acbpro/gpt-5.5",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
     }
   }
 }

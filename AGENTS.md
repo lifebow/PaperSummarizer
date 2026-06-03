@@ -16,7 +16,7 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 ## Project Snapshot
 
 - Workspace: `/Users/lifebow/Documents/arxiv_clone/newpapers`
-- This directory is not currently a git repository; `git log` fails with "not a git repository".
+- This directory is a git repository with an initial harness checkpoint commit.
 - Python package: `paper_radar`
 - CLI entrypoint: `paper-radar = paper_radar.cli:main`
 - Purpose: hourly arXiv/Semantic Scholar paper radar for AI topics, with LLM summaries, daily Markdown digests, and Telegram recaps.
@@ -49,7 +49,7 @@ Last checked on 2026-06-03 from this workspace:
 python3 -m unittest discover -v
 ```
 
-Result: `Ran 26 tests in 3.889s - OK`.
+Result: `Ran 31 tests in 1.564s - OK`.
 
 Warnings seen during tests:
 
@@ -60,7 +60,7 @@ Warnings seen during tests:
 
 - Follow the superpowers workflow when brainstorming or changing behavior.
 - For creative or behavior changes, use `superpowers:brainstorming` first and get design approval before implementation.
-- The brainstorming skill normally asks to commit written specs, but this folder currently has no `.git`; note the limitation instead of pretending a commit happened.
+- The brainstorming skill normally asks to commit written specs; this folder now has `.git`, so create a checkpoint commit before refactor work.
 - Prefer `rg` / `rg --files` for project exploration.
 - Use `apply_patch` for manual file edits.
 - Do not touch real API keys. Expected secrets are loaded from `.env` or environment variables:
@@ -122,6 +122,13 @@ Current verification: 31 tests pass, ruff check passes, ruff format passes.
 - `small_model`: `opencode/deepseek-v4-flash-free`
 - Subagent `lint`: model `opencode/deepseek-v4-flash-free`, edit deny
 - Subagent `implement`: model `acbpro/glm-5.1`, edit allow
+- Debate agents with fixed model mappings:
+  - `debate-deepseek`: `opencode/deepseek-v4-flash-free`
+  - `debate-mimo`: `opencode/mimo-v2.5-free`
+  - `debate-nemotron`: `opencode/nemotron-3-super-free`
+  - `debate-glm`: `acbpro/glm-5.1`
+  - `debate-gpt55`: `acbpro/gpt-5.5`
+  - `debate-judge`: `acbpro/gpt-5.5`
 
 ### User-Selected Debate Models (2026-06-03)
 
@@ -134,10 +141,20 @@ Panel (all debate):
 
 Judge: `acbpro/gpt-5.5`
 
-### Remaining Blockers
+### Deployment / Versioning Status
 
-1. **No `.git` repo** — workflow requires commit before refactor; refactor is blocked until user creates one
-2. **No Dockerfile** — Docker smoke gate cannot run; future deploy work needs it
+- `.git` repository exists and an initial checkpoint commit was created.
+- Dockerfile and `docker-compose.yml` exist.
+- Container smoke passed with Podman: `podman run --rm paper-radar:latest --help`.
+- Compose smoke passed with Podman Compose: `podman compose run --rm paper-radar --help`.
+- Docker Compose CLI specifically cannot run in this shell because neither
+  `docker compose` nor `docker-compose` is installed, but `podman compose` is available.
+- Dockerfile has a separate runtime dependency install layer before app wheel
+  install; normal source-only edits should reuse dependency cache. Avoid
+  `--no-cache` except when debugging stale builds.
+- After repeated smoke builds, keep `paper-radar:latest` and clean dangling
+  images with `podman image prune`; remove only this project's leftover compose
+  pod with `podman pod rm pod_newpapers` if present.
 
 ## OpenCode Workflow Docs
 

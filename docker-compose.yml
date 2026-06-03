@@ -1,0 +1,6 @@
+services:
+  paper-radar:
+    build: .
+    image: paper-radar:latest
+    entrypoint: ["paper-radar"]
+    command: ["--help"]

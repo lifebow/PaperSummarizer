@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -78,6 +79,18 @@ class PaperRadarDb:
                 );
                 """
             )
+            self._migrate_schema(conn)
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        migrations = [
+            "ALTER TABLE papers ADD COLUMN primary_category TEXT DEFAULT ''",
+            "ALTER TABLE papers ADD COLUMN archive_status TEXT DEFAULT 'metadata_only'",
+        ]
+        for sql in migrations:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(sql)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_published_at ON papers(published_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_primary_category ON papers(primary_category)")
 
     def upsert_paper(self, paper: dict[str, Any]) -> int:
         now = _now()
@@ -96,6 +109,8 @@ class PaperRadarDb:
             "pdf_url": paper.get("pdf_url", ""),
             "semantic_scholar_url": paper.get("semantic_scholar_url", ""),
             "source": paper.get("source", ""),
+            "primary_category": paper.get("primary_category", ""),
+            "archive_status": paper.get("archive_status", "metadata_only"),
         }
         with self._connect() as conn:
             if existing:
@@ -110,8 +125,9 @@ class PaperRadarDb:
                 INSERT INTO papers (
                     arxiv_id, semantic_scholar_id, title, authors_json, abstract,
                     semantic_scholar_tldr, categories_json, published_at, updated_at,
-                    pdf_url, semantic_scholar_url, source, first_seen_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pdf_url, semantic_scholar_url, source, first_seen_at,
+                    primary_category, archive_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     values["arxiv_id"],
@@ -127,6 +143,8 @@ class PaperRadarDb:
                     values["semantic_scholar_url"],
                     values["source"],
                     now,
+                    values["primary_category"],
+                    values["archive_status"],
                 ],
             )
             return int(cursor.lastrowid)
@@ -260,6 +278,7 @@ class PaperRadarDb:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
 

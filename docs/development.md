@@ -59,3 +59,50 @@ The short version:
 - code must be committed before refactor so it can be reverted.
 
 Templates live in `docs/workflows/templates/`.
+
+## Container Build
+
+Use Podman Compose in this workspace:
+
+```bash
+podman compose build
+podman compose run --rm paper-radar --help
+```
+
+The Dockerfile keeps runtime dependency installation in a separate cacheable
+layer before installing the project wheel with `--no-deps`. If runtime
+dependencies in `pyproject.toml` change, update the matching Dockerfile
+dependency layer too.
+
+Do not leave repeated smoke-test images around. Keep `paper-radar:latest` and
+clean dangling images when needed:
+
+```bash
+podman image prune
+```
+
+If Podman Compose leaves a created pod behind after smoke tests, remove only
+this project's pod:
+
+```bash
+podman pod rm pod_newpapers
+```
+
+## Fixed OpenCode Agents
+
+Current project agents in `opencode.json`:
+
+- `lint`: `opencode/deepseek-v4-flash-free`
+- `implement`: `acbpro/glm-5.1`
+- `debate-deepseek`: `opencode/deepseek-v4-flash-free`
+- `debate-mimo`: `opencode/mimo-v2.5-free`
+- `debate-nemotron`: `opencode/nemotron-3-super-free`
+- `debate-glm`: `acbpro/glm-5.1`
+- `debate-gpt55`: `acbpro/gpt-5.5`
+- `debate-judge`: `acbpro/gpt-5.5`
+
+Verify they are loaded with:
+
+```bash
+opencode agent list
+```
