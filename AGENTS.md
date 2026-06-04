@@ -24,14 +24,15 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 ## Current Structure
 
 - `paper_radar/config.py`: dataclass config loader with a small YAML parser and `.env` support.
-- `paper_radar/db.py`: SQLite schema and repository for papers, runs, results, recap state, and generic state.
+- `paper_radar/db.py`: SQLite schema and repository for papers, runs, results, recap state, generic state, and paper expansions.
 - `paper_radar/retrieval.py`: Semantic Scholar client, arXiv Atom client, hybrid merge by arXiv id, PDF downloader.
 - `paper_radar/extraction.py`: PDF extraction with PyMuPDF primary and pdfplumber fallback, plus cleanup wrapper.
-- `paper_radar/llm.py`: OpenAI-compatible JSON chat client, relevance/summary/QA prompts, quality gate.
-- `paper_radar/digest.py`: Markdown digest and Telegram recap rendering.
-- `paper_radar/telegram.py`: Telegram Bot API sender.
-- `paper_radar/daemon.py`: `PaperRadarService` orchestration, `run_once`, daily recap, watch loop.
-- `paper_radar/cli.py`: argparse CLI with `--run-once`, `--send-recap`, `archive-crawl`, and `archive-search`.
+- `paper_radar/llm.py`: OpenAI-compatible JSON chat client, relevance/summary/QA/expand prompts, quality gate.
+- `paper_radar/digest.py`: Markdown digest, Telegram recap rendering, and expanded analysis rendering.
+- `paper_radar/telegram.py`: Telegram Bot API sender with inline keyboards, callback answers, webhook management, and long message splitting.
+- `paper_radar/bot.py`: Webhook-based bot server, expand pipeline (deep LLM analysis on user request).
+- `paper_radar/daemon.py`: `PaperRadarService` orchestration, `run_once`, daily recap, watch loop, inline expand buttons on Telegram messages.
+- `paper_radar/cli.py`: argparse CLI with `--run-once`, `--send-recap`, `archive-crawl`, `archive-search`, `enrich`, `serve-bot`, `expand-paper`, `set-webhook`, `delete-webhook`.
 - `paper_radar/archive.py`: HistoricalCrawler (S2 bulk search), ArchiveSearcher (SQLite LIKE), RateLimiter.
 
 ## Existing Docs
@@ -44,8 +45,7 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 
 ## Verification Status
 
-Last checked on 2026-06-03 from this workspace after harness documentation
-hardening:
+Last checked on 2026-06-04 from this workspace after Telegram expand feature:
 
 ```bash
 python3 -m ruff check .
@@ -54,13 +54,59 @@ python3 -m unittest discover -v
 ```
 
 Result: ruff lint passed, ruff format-check passed, and unittest reported
-`Ran 61 tests in 1.650s - OK (skipped=8)`.
+`Ran 115 tests in 1.693s - OK (skipped=8)`.
 
 Warnings seen during tests:
 
 - `RequestsDependencyWarning` about urllib3/chardet/charset_normalizer versions.
 - `paperscraper.load_dumps` warnings that biorxiv/chemrxiv/medrxiv dumps are missing.
 - PyMuPDF/SWIG deprecation warnings.
+
+## Telegram Expand Feature Status
+
+Implemented v1 of the Telegram expand-paper feature (2026-06-04):
+
+- `paper_radar/bot.py`: `ExpandPipeline` (deep LLM analysis), `BotServer` (webhook HTTP server), `WebhookHandler`
+- `paper_radar/telegram.py`: Inline keyboard (`make_expand_keyboard`), callback answer, webhook set/delete, long message splitting
+- `paper_radar/llm.py`: `build_expand_prompt` with 13-field deep analysis skeleton
+- `paper_radar/digest.py`: `render_expanded_analysis` for Telegram formatting
+- `paper_radar/db.py`: `paper_expansions` table, `get_expansion`/`save_expansion` methods
+- `paper_radar/config.py`: `BotConfig` dataclass with `webhook_url`/`webhook_port`
+- `paper_radar/daemon.py`: Papers sent with `[🔍 Expand]` inline keyboard button
+- `paper_radar/cli.py`: New subcommands: `serve-bot`, `expand-paper`, `set-webhook`, `delete-webhook`
+- `paper_radar/enrichment.py`: Fixed duplicate code block (lines 135-211 removed)
+- 115 tests pass (42 original + 38 expand feature tests + 35 other tests)
+- Tests in `tests/test_bot_expand.py` cover: DB, LLM prompt, Telegram methods, digest rendering, expand pipeline, bot server callbacks, config, backward compatibility
+
+### Usage
+
+```bash
+# Start webhook bot server (requires public HTTPS URL)
+paper-radar serve-bot --port 8080
+
+# Set webhook URL with Telegram
+paper-radar set-webhook https://your-server.com/webhook
+
+# Expand a paper via CLI (sends result to Telegram)
+paper-radar expand-paper 2606.03988
+
+# Expand without sending to Telegram (prints JSON to stdout)
+paper-radar expand-paper 2606.03988 --no-send
+
+# Remove webhook
+paper-radar delete-webhook
+```
+
+### Configuration
+
+Add to `config.yaml` or `.env`:
+```yaml
+bot:
+  webhook_url_env: BOT_WEBHOOK_URL
+  webhook_port: 8080
+```
+
+Or set environment variable: `BOT_WEBHOOK_URL=https://your-server.com/webhook`
 
 Harness proof levels observed on 2026-06-03:
 

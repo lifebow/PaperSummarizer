@@ -5,11 +5,13 @@ import logging
 import sys
 
 from .archive import ArchiveSearcher, HistoricalCrawler, RateLimiter
+from .bot import BotServer, ExpandPipeline
 from .config import load_config
 from .daemon import DefaultPaperLlm, PaperRadarService
 from .db import PaperRadarDb
 from .enrichment import ArchiveEnricher
 from .llm import LlmClient
+from .telegram import TelegramSender
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,18 @@ def main() -> None:
     enrich.add_argument("--limit", type=int, default=50, help="Max papers to process")
     enrich.add_argument("--dry-run", action="store_true", help="Show what would be processed")
 
+    serve_bot = subparsers.add_parser("serve-bot", help="Start webhook bot server for expand requests")
+    serve_bot.add_argument("--port", type=int, help="Override webhook port")
+
+    expand_paper = subparsers.add_parser("expand-paper", help="Expand a paper analysis and send to Telegram")
+    expand_paper.add_argument("arxiv_id", help="arXiv ID to expand")
+    expand_paper.add_argument("--no-send", action="store_true", help="Print result instead of sending to Telegram")
+
+    set_webhook = subparsers.add_parser("set-webhook", help="Set Telegram webhook URL")
+    set_webhook.add_argument("url", help="Webhook URL to register")
+
+    subparsers.add_parser("delete-webhook", help="Remove Telegram webhook")
+
     parser.add_argument("--run-once", action="store_true", help="Run one batch and exit.")
     parser.add_argument("--send-recap", help="Send recap for YYYY-MM-DD and exit.")
     args = parser.parse_args()
@@ -58,6 +72,18 @@ def main() -> None:
         return
     if args.command == "enrich":
         _handle_enrich(args)
+        return
+    if args.command == "serve-bot":
+        _handle_serve_bot(args)
+        return
+    if args.command == "expand-paper":
+        _handle_expand_paper(args)
+        return
+    if args.command == "set-webhook":
+        _handle_set_webhook(args)
+        return
+    if args.command == "delete-webhook":
+        _handle_delete_webhook(args)
         return
 
     config = load_config(args.config, args.env)
@@ -153,6 +179,68 @@ def _handle_enrich(args: argparse.Namespace) -> None:
 
     if len(results) > 10:
         print(f"  ... and {len(results) - 10} more")
+
+
+def _handle_serve_bot(args: argparse.Namespace) -> None:
+    config = load_config(args.config, args.env)
+    require_llm_config(config)
+    db = _get_db(args)
+    llm_client = LlmClient(base_url=config.llm.base_url, api_key=config.llm.api_key, model=config.llm.model)
+    telegram = TelegramSender(bot_token=config.telegram.bot_token, chat_id=config.telegram.chat_id)
+    if args.port:
+        from dataclasses import replace
+
+        config = replace(config, bot=replace(config.bot, webhook_port=args.port))
+    server = BotServer(config=config, db=db, llm=llm_client, telegram=telegram)
+    server.start()
+
+
+def _handle_expand_paper(args: argparse.Namespace) -> None:
+    import json as json_mod
+
+    config = load_config(args.config, args.env)
+    require_llm_config(config)
+    db = _get_db(args)
+    llm_client = LlmClient(base_url=config.llm.base_url, api_key=config.llm.api_key, model=config.llm.model)
+    telegram = TelegramSender(bot_token=config.telegram.bot_token, chat_id=config.telegram.chat_id)
+
+    if args.no_send:
+        cached = db.get_expansion(args.arxiv_id)
+        if cached:
+            print(json_mod.dumps(cached.get("skeleton", {}), indent=2, ensure_ascii=False))
+            return
+        paper = db.get_paper_by_arxiv_id(args.arxiv_id)
+        if not paper:
+            print(f"Paper not found: {args.arxiv_id}", file=sys.stderr)
+            sys.exit(1)
+        full_text = ""
+        text_data = db.get_paper_text(paper["id"])
+        if text_data:
+            full_text = text_data.get("full_text", "")
+        from .llm import build_expand_prompt
+
+        system, user = build_expand_prompt(paper["title"], paper["abstract"], full_text)
+        result = llm_client.complete_json(system, user)
+        db.save_expansion(paper["id"], args.arxiv_id, result)
+        print(json_mod.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        pipeline = ExpandPipeline(db=db, llm=llm_client, telegram=telegram)
+        status = pipeline.expand_and_send(args.arxiv_id, config.telegram.chat_id)
+        print(f"Expand {args.arxiv_id}: {status}")
+
+
+def _handle_set_webhook(args: argparse.Namespace) -> None:
+    config = load_config(args.config, args.env)
+    telegram = TelegramSender(bot_token=config.telegram.bot_token, chat_id=config.telegram.chat_id)
+    result = telegram.set_webhook(args.url)
+    print(f"Webhook set: {result}")
+
+
+def _handle_delete_webhook(args: argparse.Namespace) -> None:
+    config = load_config(args.config, args.env)
+    telegram = TelegramSender(bot_token=config.telegram.bot_token, chat_id=config.telegram.chat_id)
+    result = telegram.delete_webhook()
+    print(f"Webhook deleted: {result}")
 
 
 def require_llm_config(config) -> None:

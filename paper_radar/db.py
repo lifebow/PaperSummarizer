@@ -92,6 +92,22 @@ class PaperRadarDb:
                     extracted_at TEXT NOT NULL DEFAULT '',
                     FOREIGN KEY(paper_id) REFERENCES papers(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS paper_expansions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id INTEGER NOT NULL,
+                    arxiv_id TEXT NOT NULL UNIQUE,
+                    skeleton_json TEXT NOT NULL DEFAULT '{}',
+                    expanded_at TEXT NOT NULL,
+                    FOREIGN KEY(paper_id) REFERENCES papers(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS author_affiliations (
+                    s2_author_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL DEFAULT '',
+                    affiliation TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL DEFAULT ''
+                );
                 """
             )
             self._migrate_schema(conn)
@@ -100,6 +116,8 @@ class PaperRadarDb:
         migrations = [
             "ALTER TABLE papers ADD COLUMN primary_category TEXT DEFAULT ''",
             "ALTER TABLE papers ADD COLUMN archive_status TEXT DEFAULT 'metadata_only'",
+            "ALTER TABLE papers ADD COLUMN author_affiliations_json TEXT DEFAULT '[]'",
+            "ALTER TABLE papers ADD COLUMN author_s2_ids_json TEXT DEFAULT '[]'",
         ]
         for sql in migrations:
             with contextlib.suppress(sqlite3.OperationalError):
@@ -126,6 +144,8 @@ class PaperRadarDb:
             "source": paper.get("source", ""),
             "primary_category": paper.get("primary_category", ""),
             "archive_status": paper.get("archive_status", "metadata_only"),
+            "author_affiliations_json": json.dumps(paper.get("author_affiliations", []), ensure_ascii=False),
+            "author_s2_ids_json": json.dumps(paper.get("author_s2_ids", []), ensure_ascii=False),
         }
         with self._connect() as conn:
             if existing:
@@ -141,8 +161,9 @@ class PaperRadarDb:
                     arxiv_id, semantic_scholar_id, title, authors_json, abstract,
                     semantic_scholar_tldr, categories_json, published_at, updated_at,
                     pdf_url, semantic_scholar_url, source, first_seen_at,
-                    primary_category, archive_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    primary_category, archive_status,
+                    author_affiliations_json, author_s2_ids_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     values["arxiv_id"],
@@ -160,6 +181,8 @@ class PaperRadarDb:
                     now,
                     values["primary_category"],
                     values["archive_status"],
+                    values["author_affiliations_json"],
+                    values["author_s2_ids_json"],
                 ],
             )
             return int(cursor.lastrowid)
@@ -249,6 +272,8 @@ class PaperRadarDb:
             item["summary"] = json.loads(item.pop("summary_json") or "{}")
             item["authors"] = json.loads(item.get("authors_json") or "[]")
             item["categories"] = json.loads(item.get("categories_json") or "[]")
+            item["author_affiliations"] = json.loads(item.get("author_affiliations_json") or "[]")
+            item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
             results.append(item)
         return results
 
@@ -338,6 +363,65 @@ class PaperRadarDb:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_expansion(self, arxiv_id: str) -> dict[str, Any] | None:
+        """Get cached expansion result by arxiv_id."""
+        if not arxiv_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM paper_expansions WHERE arxiv_id=?",
+                (arxiv_id,),
+            ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["skeleton"] = json.loads(result.pop("skeleton_json") or "{}")
+        return result
+
+    def save_expansion(self, paper_id: int, arxiv_id: str, skeleton: dict[str, Any]) -> int:
+        """Save expansion result. Returns the expansion id."""
+        now = now_utc_iso()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO paper_expansions (paper_id, arxiv_id, skeleton_json, expanded_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(arxiv_id) DO UPDATE SET
+                    skeleton_json=excluded.skeleton_json,
+                    expanded_at=excluded.expanded_at
+                """,
+                (paper_id, arxiv_id, json.dumps(skeleton, ensure_ascii=False), now),
+            )
+            return int(cursor.lastrowid)
+
+    def get_author_affiliations_batch(self, s2_author_ids: list[str]) -> dict[str, str]:
+        """Get cached affiliations for a batch of S2 author IDs."""
+        if not s2_author_ids:
+            return {}
+        with self._connect() as conn:
+            placeholders = ",".join("?" * len(s2_author_ids))
+            rows = conn.execute(
+                f"SELECT s2_author_id, affiliation FROM author_affiliations WHERE s2_author_id IN ({placeholders})",
+                s2_author_ids,
+            ).fetchall()
+        return {str(row["s2_author_id"]): str(row["affiliation"]) for row in rows if row["affiliation"]}
+
+    def save_author_affiliation(self, s2_author_id: str, name: str, affiliation: str) -> None:
+        """Save or update an author's affiliation."""
+        now = now_utc_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO author_affiliations (s2_author_id, name, affiliation, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(s2_author_id) DO UPDATE SET
+                    name=excluded.name,
+                    affiliation=excluded.affiliation,
+                    updated_at=excluded.updated_at
+                """,
+                (s2_author_id, name, affiliation, now),
+            )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)

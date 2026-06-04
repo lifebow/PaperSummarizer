@@ -10,6 +10,8 @@ class PaperMetadata:
     semantic_scholar_id: str = ""
     title: str = ""
     authors: list[str] = field(default_factory=list)
+    author_s2_ids: list[str] = field(default_factory=list)
+    author_affiliations: list[str] = field(default_factory=list)
     abstract: str = ""
     semantic_scholar_tldr: str = ""
     categories: list[str] = field(default_factory=list)
@@ -40,10 +42,16 @@ def s2_item_to_paper(item: dict[str, Any], *, include_fields_of_study: bool = Fa
         categories = [f for f in fields_of_study if isinstance(f, str)]
         primary_category = categories[0] if categories else ""
 
+    s2_authors = item.get("authors") or []
+    author_names = [a.get("name", "") for a in s2_authors if a.get("name")]
+    author_s2_ids = [a.get("authorId", "") for a in s2_authors if a.get("authorId")]
+
     return PaperMetadata(
         arxiv_id=arxiv_id,
         semantic_scholar_id=item.get("paperId", ""),
         title=item.get("title", "") or "",
+        authors=author_names,
+        author_s2_ids=author_s2_ids,
         abstract=item.get("abstract", "") or "",
         semantic_scholar_tldr=tldr.get("text", "") if isinstance(tldr, dict) else "",
         categories=categories,

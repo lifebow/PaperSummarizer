@@ -76,13 +76,20 @@ def build_relevance_prompt(title: str, abstract: str, topics: list[str]) -> tupl
 
 
 _MAX_TEXT_CHARS = 15000
+_EXPAND_MAX_TEXT_CHARS = 30000
 
 
 def build_summary_prompt(title: str, abstract: str, full_text_markdown: str) -> tuple[str, str]:
     system = (
         "You summarize AI papers for idea mining. Return strict JSON with keys: "
         "background_needed, what_the_paper_does, novelty, method, math_technical_core, "
-        "results_claims, limitations_uncertainty, ideas_to_try."
+        "results_claims, limitations_uncertainty, ideas_to_try, author_names, author_affiliations. "
+        "For author_names: list ALL author names from the paper header. "
+        "For author_affiliations: extract the list of unique institution names "
+        "(universities, companies, research labs) from the paper header under the title. "
+        'Return both as lists of strings, e.g. author_names: ["John Doe", "Jane Smith"], '
+        'author_affiliations: ["MIT", "Google DeepMind"]. '
+        "If not available, return an empty list."
     )
     user = json.dumps(
         {
@@ -114,6 +121,36 @@ def _truncate(text: str, *, limit: int = _MAX_TEXT_CHARS) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "\n... [truncated]"
+
+
+def build_expand_prompt(title: str, abstract: str, full_text_markdown: str) -> tuple[str, str]:
+    """Build prompt for deep paper expansion analysis."""
+    system = (
+        "You perform deep analysis of AI research papers. Return strict JSON with these keys:\n"
+        "- deep_summary: 3-5 sentence deep summary of the paper\n"
+        "- problem_statement: what problem does the paper solve\n"
+        "- key_contribution: the main contribution in one clear sentence\n"
+        "- methodology_detail: detailed methodology, algorithm, architecture explanation\n"
+        "- mathematical_framework: mathematical framework, notation, key assumptions\n"
+        "- experiments_and_results: detailed experiments, benchmarks, metrics, comparisons\n"
+        "- strengths: what makes this paper strong\n"
+        "- weaknesses: limitations, assumptions, potential issues\n"
+        "- reproducibility: assessment - code available? data? compute needed?\n"
+        "- related_work_context: where this paper fits in the research landscape\n"
+        "- practical_applications: potential real-world applications\n"
+        "- extension_ideas: concrete ideas for extending or combining this work\n"
+        "- reading_recommendation: who should read this and which sections to focus on"
+    )
+    user = json.dumps(
+        {
+            "title": title,
+            "abstract": abstract,
+            "full_text_markdown": _truncate(full_text_markdown, limit=_EXPAND_MAX_TEXT_CHARS),
+            "analysis_depth": "thorough, with specific details and evidence from the paper",
+        },
+        ensure_ascii=False,
+    )
+    return system, user
 
 
 def _extract_json_object(content: str) -> dict[str, Any]:

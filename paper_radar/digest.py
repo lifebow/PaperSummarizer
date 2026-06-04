@@ -84,9 +84,22 @@ def render_paper_short(paper: dict[str, Any]) -> str:
     why = summary.get("what_the_paper_does", "")
     novelty = summary.get("novelty", "")
     published = paper.get("published_at", "")
-    lines = [f"📄 *{paper.get('title', 'Untitled')}*"]
+    affiliations = paper.get("author_affiliations") or summary.get("author_affiliations") or []
+    author_names = summary.get("author_names") or paper.get("authors") or []
+    if isinstance(author_names, str):
+        author_names = [author_names]
+    title = paper.get("title") or "Untitled"
+    lines = [f"📄 *{title}*"]
     if published:
         lines.append(f"📅 {published}")
+    if author_names:
+        names_str = ", ".join(author_names[:8])
+        if len(author_names) > 8:
+            names_str += f" +{len(author_names) - 8} more"
+        lines.append(f"👥 {names_str}")
+    if affiliations:
+        unique_affs = list(dict.fromkeys(affiliations))
+        lines.append(f"🏢 {', '.join(unique_affs[:5])}")
     lines.append(f"🔗 [{paper.get('arxiv_id', 'link')}]({link})")
     if why:
         lines.append(f"\n🔍 *What:* {why}")
@@ -134,3 +147,47 @@ def _qa_line(paper: dict[str, Any], qa_scores: dict[str, Any]) -> str:
     grounding = qa_scores.get("grounding", paper.get("grounding_score", ""))
     idea = qa_scores.get("idea", paper.get("idea_score", ""))
     return f"- QA: relevance {relevance} / grounding {grounding} / idea {idea}"
+
+
+def render_expanded_analysis(expansion: dict[str, Any], paper: dict[str, Any] | None = None) -> str:
+    """Render expanded analysis for Telegram."""
+    skeleton = expansion.get("skeleton", expansion)
+    title = paper.get("title", "") if paper else ""
+    arxiv_id = paper.get("arxiv_id", "") if paper else expansion.get("arxiv_id", "")
+
+    lines: list[str] = []
+    if title:
+        lines.append(f"🔬 *Expanded: {title}*")
+    if arxiv_id:
+        lines.append(f"🔗 [{arxiv_id}](https://arxiv.org/abs/{arxiv_id})")
+    lines.append("")
+
+    sections = [
+        ("📝 Deep Summary", "deep_summary"),
+        ("❓ Problem Statement", "problem_statement"),
+        ("⭐ Key Contribution", "key_contribution"),
+        ("🔧 Methodology Detail", "methodology_detail"),
+        ("📐 Mathematical Framework", "mathematical_framework"),
+        ("📊 Experiments & Results", "experiments_and_results"),
+        ("💪 Strengths", "strengths"),
+        ("⚠️ Weaknesses", "weaknesses"),
+        ("🔄 Reproducibility", "reproducibility"),
+        ("📚 Related Work Context", "related_work_context"),
+        ("🚀 Practical Applications", "practical_applications"),
+        ("💡 Extension Ideas", "extension_ideas"),
+        ("📖 Reading Recommendation", "reading_recommendation"),
+    ]
+
+    for label, key in sections:
+        value = skeleton.get(key, "")
+        if value:
+            if isinstance(value, list):
+                lines.append(f"*{label}*")
+                lines.extend(f"• {item}" for item in value)
+                lines.append("")
+            else:
+                lines.append(f"*{label}*")
+                lines.append(str(value))
+                lines.append("")
+
+    return "\n".join(lines)

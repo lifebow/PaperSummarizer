@@ -13,8 +13,8 @@ from .digest import (
 )
 from .extraction import PdfExtractor, extract_introduction, process_pdf_with_cleanup
 from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, passes_quality_gate
-from .retrieval import PdfDownloader, make_default_retriever
-from .telegram import TelegramSender
+from .retrieval import PdfDownloader, _normalize_arxiv_id, make_default_retriever
+from .telegram import TelegramSender, make_expand_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,10 @@ class PaperRadarService:
                 limit=self.config.filters.max_papers_per_batch,
             )
             found_count = len(papers)
+            self._enrich_author_affiliations(papers)
             for paper in papers:
+                # Normalize arxiv_id (strip v1 suffix) for dedup
+                paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
                 if self.db.get_paper_by_arxiv_id(paper.arxiv_id):
                     continue
                 try:
@@ -97,7 +100,9 @@ class PaperRadarService:
                     def process(path, *, current_paper=paper, current_paper_id=paper_id, current_relevance=relevance):
                         extracted = self.extractor.extract(path)
                         intro = extract_introduction(extracted.text, current_paper.abstract)
-                        summary_text = f"{current_paper.abstract}\n\n{intro}"
+                        # Include PDF header (first ~3000 chars with authors/affiliations under title)
+                        header_text = extracted.text[:3000]
+                        summary_text = f"{header_text}\n\n{current_paper.abstract}\n\n{intro}"
                         summary = self.llm.summarize(current_paper, summary_text) if self.llm else {}
                         qa = (
                             self.llm.qa(current_paper, summary, current_paper.abstract)
@@ -175,7 +180,8 @@ class PaperRadarService:
             for paper in papers:
                 msg = render_paper_short(paper)
                 if msg:
-                    self.telegram.send_message(msg)
+                    keyboard = make_expand_keyboard(paper.get("arxiv_id", ""))
+                    self.telegram.send_message(msg, reply_markup=keyboard)
             self.db.mark_recap(digest_date, "sent")
             return True
         except Exception as exc:
@@ -196,16 +202,48 @@ class PaperRadarService:
             for paper in accepted_batch:
                 msg = render_paper_short(paper)
                 if msg:
-                    self.telegram.send_message(msg)
+                    keyboard = make_expand_keyboard(paper.get("arxiv_id", ""))
+                    self.telegram.send_message(msg, reply_markup=keyboard)
             return
         papers = self.db.accepted_results_for_date(digest_date)
         for paper in papers:
             msg = render_paper_short(paper)
             if msg:
-                self.telegram.send_message(msg)
+                keyboard = make_expand_keyboard(paper.get("arxiv_id", ""))
+                self.telegram.send_message(msg, reply_markup=keyboard)
         self.db.set_state("last_daily_full_sent_at", digest_date)
 
     def watch(self) -> None:
         while True:
             self.run_once()
             time.sleep(self.config.daemon.interval_minutes * 60)
+
+    def _enrich_author_affiliations(self, papers: list[Any]) -> None:
+        """Fetch and cache author affiliations from S2 for all papers in batch."""
+        all_author_ids: list[str] = []
+        for paper in papers:
+            s2_ids = getattr(paper, "author_s2_ids", []) or []
+            all_author_ids.extend(s2_ids)
+        unique_ids = list(dict.fromkeys(id for id in all_author_ids if id))
+        if not unique_ids:
+            return
+
+        cached = self.db.get_author_affiliations_batch(unique_ids)
+        uncached_ids = [aid for aid in unique_ids if aid not in cached]
+
+        new_affiliations: dict[str, str] = {}
+        if uncached_ids and hasattr(self.retriever, "fetch_author_affiliations"):
+            try:
+                new_affiliations = self.retriever.fetch_author_affiliations(uncached_ids[:20])
+            except Exception as exc:
+                logger.warning("Author affiliation fetch failed: %s", exc)
+
+        for aid, aff in new_affiliations.items():
+            self.db.save_author_affiliation(aid, "", aff)
+
+        all_affiliations = {**cached, **new_affiliations}
+        for paper in papers:
+            s2_ids = getattr(paper, "author_s2_ids", []) or []
+            paper_affs = [all_affiliations[aid] for aid in s2_ids if aid in all_affiliations]
+            if paper_affs:
+                paper.author_affiliations = list(dict.fromkeys(paper_affs))

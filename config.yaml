@@ -30,6 +30,7 @@ semantic_scholar:
   fields:
     - "title"
     - "abstract"
+    - "authors"
     - "publicationDate"
     - "externalIds"
     - "openAccessPdf"

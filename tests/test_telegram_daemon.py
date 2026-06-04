@@ -85,7 +85,7 @@ class TelegramDaemonTests(unittest.TestCase):
             fake_telegram = type(
                 "FakeTelegram",
                 (),
-                {"send_message": lambda self, msg: sent_messages.append(msg)},
+                {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
             )()
             service = PaperRadarService(
                 config=config,
@@ -126,10 +126,15 @@ class TelegramDaemonTests(unittest.TestCase):
                 accepted=True,
                 digest_date="2026-05-29",
             )
+            fake_tg_cls = type(
+                "FakeTelegram",
+                (),
+                {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
+            )
             service = PaperRadarService(
                 config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
                 db=db,
-                telegram=type("FakeTelegram", (), {"send_message": lambda self, msg: sent_messages.append(msg)})(),
+                telegram=fake_tg_cls(),
             )
 
             sent = service.send_daily_recap("2026-05-29")
@@ -176,7 +181,7 @@ class TelegramDaemonTests(unittest.TestCase):
                 telegram=type(
                     "FakeTelegram",
                     (),
-                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
                 )(),
             )
 
@@ -224,7 +229,7 @@ class TelegramDaemonTests(unittest.TestCase):
                 telegram=type(
                     "FakeTelegram",
                     (),
-                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
                 )(),
             )
 
@@ -251,7 +256,7 @@ class TelegramDaemonTests(unittest.TestCase):
                 telegram=type(
                     "FakeTelegram",
                     (),
-                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
                 )(),
             )
 
@@ -298,7 +303,7 @@ class TelegramDaemonTests(unittest.TestCase):
                 telegram=type(
                     "FakeTelegram",
                     (),
-                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
                 )(),
             )
 
@@ -348,7 +353,7 @@ class TelegramDaemonTests(unittest.TestCase):
                 telegram=type(
                     "FakeTelegram",
                     (),
-                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
                 )(),
             )
 
@@ -382,7 +387,7 @@ class TelegramDaemonTests(unittest.TestCase):
             paper = db.get_paper_by_arxiv_id("1")
             paper["summary"] = {"what_the_paper_does": "Does work", "ideas_to_try": ["Try"]}
 
-            def raise_send(self, msg):
+            def raise_send(self, msg, **kwargs):
                 raise RuntimeError("Telegram is down")
 
             service = PaperRadarService(

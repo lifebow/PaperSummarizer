@@ -25,14 +25,23 @@ class SemanticScholarClient:
         http_get: Callable[..., dict[str, Any]] | None = None,
     ):
         self.api_keys = api_keys
-        self.fields = fields or [
+        base_fields = [
             "title",
             "abstract",
+            "authors",
             "publicationDate",
             "externalIds",
             "openAccessPdf",
             "url",
         ]
+        if fields:
+            merged = list(fields)
+            for f in base_fields:
+                if f not in merged:
+                    merged.append(f)
+            self.fields = merged
+        else:
+            self.fields = base_fields
         self.http_get = http_get or json_get
         self._next_key = 0
 
@@ -57,6 +66,31 @@ class SemanticScholarClient:
             timeout=60,
         )
         return [paper for paper in (s2_item_to_paper(item) for item in payload.get("data", [])) if paper]
+
+    def fetch_author_affiliations(self, author_ids: list[str]) -> dict[str, str]:
+        """Fetch affiliations for a list of S2 author IDs. Returns {author_id: affiliation}."""
+        result: dict[str, str] = {}
+        for author_id in author_ids:
+            if not author_id:
+                continue
+            try:
+                headers: dict[str, str] = {"User-Agent": USER_AGENT}
+                if self.api_keys:
+                    headers["x-api-key"] = self.api_keys[self._next_key % len(self.api_keys)]
+                    self._next_key += 1
+                payload = self.http_get(
+                    f"https://api.semanticscholar.org/graph/v1/author/{author_id}",
+                    params={"fields": "name,affiliations"},
+                    headers=headers,
+                    timeout=30,
+                )
+                affiliations = payload.get("affiliations") or []
+                aff_name = affiliations[0].get("name", "") if affiliations else ""
+                if aff_name:
+                    result[author_id] = aff_name
+            except Exception as exc:
+                logger.warning("Failed to fetch affiliation for author %s: %s", author_id, exc)
+        return result
 
 
 class ArxivClient:
@@ -135,7 +169,7 @@ class HybridRetriever:
         merged: dict[str, PaperMetadata] = {}
         for paper in self.semantic_scholar_search(queries, limit, since):
             if paper.arxiv_id:
-                merged[paper.arxiv_id] = paper
+                merged[_normalize_arxiv_id(paper.arxiv_id)] = paper
         try:
             arxiv_papers = self.arxiv_search(categories, since, limit)
         except Exception as exc:
@@ -143,8 +177,9 @@ class HybridRetriever:
             arxiv_papers = []
         for paper in arxiv_papers:
             if paper.arxiv_id:
-                existing = merged.get(paper.arxiv_id)
-                merged[paper.arxiv_id] = _merge_s2_with_arxiv(existing, paper) if existing else paper
+                key = _normalize_arxiv_id(paper.arxiv_id)
+                existing = merged.get(key)
+                merged[key] = _merge_s2_with_arxiv(existing, paper) if existing else paper
         return list(merged.values())[:limit]
 
 
@@ -189,6 +224,13 @@ def make_default_retriever(api_keys: list[str], fields: list[str]) -> HybridRetr
     )
 
 
+def _normalize_arxiv_id(arxiv_id: str) -> str:
+    """Strip version suffix (e.g. 'v1') from an arXiv ID for dedup/merge."""
+    import re
+
+    return re.sub(r"v\d+$", "", arxiv_id)
+
+
 def _merge_s2_with_arxiv(s2: PaperMetadata | None, arxiv: PaperMetadata) -> PaperMetadata:
     if s2 is None:
         return arxiv
@@ -197,6 +239,8 @@ def _merge_s2_with_arxiv(s2: PaperMetadata | None, arxiv: PaperMetadata) -> Pape
         semantic_scholar_id=s2.semantic_scholar_id,
         title=arxiv.title or s2.title,
         authors=arxiv.authors or s2.authors,
+        author_s2_ids=s2.author_s2_ids,
+        author_affiliations=s2.author_affiliations,
         abstract=arxiv.abstract or s2.abstract,
         semantic_scholar_tldr=s2.semantic_scholar_tldr,
         categories=arxiv.categories or s2.categories,

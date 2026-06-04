@@ -57,6 +57,12 @@ class TelegramConfig:
 
 
 @dataclass(frozen=True)
+class BotConfig:
+    webhook_url: str = ""
+    webhook_port: int = 8080
+
+
+@dataclass(frozen=True)
 class AppConfig:
     topics: TopicConfig = field(default_factory=TopicConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
@@ -65,6 +71,7 @@ class AppConfig:
     semantic_scholar: SemanticScholarConfig = field(default_factory=SemanticScholarConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    bot: BotConfig = field(default_factory=BotConfig)
 
 
 def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = ".env") -> AppConfig:
@@ -79,6 +86,7 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
     s2 = raw.get("semantic_scholar", {})
     llm = raw.get("llm", {})
     telegram = raw.get("telegram", {})
+    bot = raw.get("bot", {})
 
     s2_key_env = str(s2.get("api_key_env", "SEMANTIC_SCHOLAR_API_KEYS"))
     llm_base_env = str(llm.get("base_url_env", "OPENAI_BASE_URL"))
@@ -123,6 +131,10 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
         telegram=TelegramConfig(
             bot_token=_env(telegram_token_env, env_values),
             chat_id=_env(telegram_chat_env, env_values),
+        ),
+        bot=BotConfig(
+            webhook_url=_env(str(bot.get("webhook_url_env", "BOT_WEBHOOK_URL")), env_values),
+            webhook_port=int(bot.get("webhook_port", 8080)),
         ),
     )
 
