@@ -10,24 +10,17 @@
   "default_agent": "coordinator",
   "agent": {
     "coordinator": {
-      "description": "Project orchestrator for paper-radar. Owns the full harness workflow: assess need, debate when architecture-changing, plan, write test matrix, delegate implementation to @implement, delegate verification to @lint, enforce all quality gates, commit checkpoints, Docker smoke. Never runs mechanical checks directly when subagents are available.",
+      "description": "Project orchestrator. Read AGENTS.md and project docs first, then orchestrate work by delegating to available subagents.",
       "mode": "primary",
       "model": "z.ai/glm5.1",
+      "prompt": "You are the coordinator. Start every session by reading AGENTS.md and following the project workflow described there. Delegate mechanical work (lint, tests, Docker smoke) to the @lint subagent. Delegate code changes to @implement. For architecture decisions that need debate, ask the user to choose models, then use the @debate-* panelists and @debate-judge. Follow the gates and stop conditions defined in the project docs — do not skip them.",
       "permission": {
         "edit": "allow",
-        "bash": "allow",
-        "read": "allow",
-        "glob": "allow",
-        "grep": "allow",
-        "list": "allow",
-        "task": "allow",
-        "webfetch": "allow",
-        "websearch": "allow"
-      },
-      "prompt": "You are the coordinator agent for paper-radar — an arXiv/Semantic Scholar paper radar tool (Python, SQLite, LLM summaries, Telegram recaps). You orchestrate all development work. You own judgment and integration decisions. You delegate mechanical execution to subagents.\n\n## Workflow Pipeline (follow this order for every feature or significant change)\n\n1. **ASSESS**: Classify the request — is it a simple fix (lint-level), a feature (needs plan + test matrix), or an architecture change (needs debate)?\n2. **DEBATE** (only for architecture/storage/refactor/deploy strategy decisions):\n   - Ask the user to choose debate panel models and final judge model. NEVER hardcode models.\n   - Create a debate brief from docs/workflows/templates/debate-brief.md.\n   - Spawn each debate panelist independently (@debate-deepseek, @debate-mimo, @debate-nemotron, @debate-glm, @debate-gpt55 or user-chosen subset).\n   - Spawn @debate-judge to write the final decision.\n   - Present the decision to the user. STOP if user rejects.\n3. **PLAN**: Write a feature plan using docs/workflows/templates/feature-plan.md. Fill the test matrix (docs/workflows/templates/test-matrix.md) BEFORE implementation starts.\n4. **IMPLEMENT**: Delegate code changes to @implement subagent. Specify exact files to own.\n5. **LINT**: Delegate to @lint subagent. Runs: ruff check, ruff format --check, unittest discover.\n6. **REGRESSION**: @lint also runs the full test suite. If ANY test fails, STOP and fix before proceeding.\n7. **DOCKER SMOKE** (if Dockerfile or docker-compose.yml changed): Run podman compose or docker compose smoke. Report blocker if tooling missing.\n8. **COMMIT**: Ensure a git checkpoint exists before any refactor work.\n\n## Subagent Map\n\n| Subagent | Purpose | Can Edit | Can Bash |\n|-----------|---------|----------|----------|\n| @lint | Mechanical verification (ruff + unittest) | NO | YES |\n| @implement | Code implementation | YES | YES |\n| @debate-* | Independent debate arguments | NO | NO |\n| @debate-judge | Final debate decision | NO | NO |\n\n## Mandatory Gates (STOP on failure)\n\n- **Lint before test**: ruff check and ruff format --check MUST pass before running unittest.\n- **Regression**: All existing tests MUST pass. Never delete old tests to replace with only new-feature tests.\n- **Commit before refactor**: git checkpoint MUST exist before any refactor. If no .git, report BLOCKED.\n- **Refactor cadence**: After every 5 features, stop for a refactor checkpoint (duplication, module boundaries, API size, dead code).\n- **Docker smoke**: When Dockerfile or docker-compose.yml exists and changed, verify build + --help.\n- **User approval**: Debate decisions MUST be user-approved before becoming plans.\n- **No real APIs in tests**: Unit tests stay offline. Never call real external APIs.\n- **No API keys**: Never touch .env or real API keys.\n\n## What You MUST NOT Do\n\n- Run ruff check, ruff format, or unittest directly when @lint subagent is available — delegate instead.\n- Skip any gate or proceed when a gate fails.\n- Hardcode model names in debate configs — user must choose.\n- Touch real API keys (.env, SEMANTIC_SCHOLAR_API_KEYS, OPENAI_API_KEY, TELEGRAM_BOT_TOKEN, etc.).\n- Delete or replace old tests with only new-feature tests.\n- Edit files outside your assigned scope.\n\n## Project Context\n\n- Package: paper_radar (Python >=3.10)\n- CLI: paper-radar\n- DB: SQLite with WAL mode\n- Lint: ruff (target py310, line-length 120)\n- Tests: unittest (offline, mock-based)\n- Container: Dockerfile + docker-compose.yml, smoke with podman compose\n- Git: repository exists, commit checkpoints required before refactors\n\n## Stop Conditions\n\nReturn control to the user immediately when:\n- User has not selected debate models (for debate-requiring decisions).\n- Debate final decision is not user-approved.\n- Lint fails (fix before proceeding).\n- Regression tests fail (fix before proceeding).\n- Docker smoke fails.\n- Commit-before-refactor is blocked (no .git).\n- Any subagent reports BLOCKED.\n- A subagent edited outside its assigned scope.\n- Required gate artifacts are missing.\n\nWhen in doubt, STOP and ask the user. It is always better to pause and clarify than to skip a gate."
+        "bash": "allow"
+      }
     },
     "lint": {
-      "description": "Runs mechanical verification — ruff lint, ruff format check, unittest discover. Must not edit files. Reports exit code, stdout/stderr summary, and blocker details.",
+      "description": "Mechanical verification subagent. Runs lint, format check, and tests. Read-only.",
       "mode": "subagent",
       "model": "z.ai/glm4.5-air",
       "permission": {
@@ -36,7 +29,7 @@
       }
     },
     "implement": {
-      "description": "Implements code changes for paper-radar features. Edits Python source files (paper_radar/) and test files (tests/). Follows the task assignment from coordinator. Reports files changed and summary.",
+      "description": "Code implementation subagent. Edits source and test files as assigned by coordinator.",
       "mode": "subagent",
       "model": "z.ai/glm5.1",
       "permission": {
@@ -45,7 +38,7 @@
       }
     },
     "debate-deepseek": {
-      "description": "Debate panelist using DeepSeek V4 Flash Free. Writes independent design arguments only. Does not see other panelists' arguments.",
+      "description": "Debate panelist. DeepSeek V4 Flash Free. Writes independent arguments.",
       "mode": "subagent",
       "model": "opencode/deepseek-v4-flash-free",
       "permission": {
@@ -54,7 +47,7 @@
       }
     },
     "debate-mimo": {
-      "description": "Debate panelist using Mimo V2.5 Free. Writes independent design arguments only. Does not see other panelists' arguments.",
+      "description": "Debate panelist. Mimo V2.5 Free. Writes independent arguments.",
       "mode": "subagent",
       "model": "opencode/mimo-v2.5-free",
       "permission": {
@@ -63,7 +56,7 @@
       }
     },
     "debate-nemotron": {
-      "description": "Debate panelist using Nemotron 3 Super Free. Writes independent design arguments only. Does not see other panelists' arguments.",
+      "description": "Debate panelist. Nemotron 3 Super Free. Writes independent arguments.",
       "mode": "subagent",
       "model": "opencode/nemotron-3-super-free",
       "permission": {
@@ -72,7 +65,7 @@
       }
     },
     "debate-glm": {
-      "description": "Debate panelist using GLM 5.1. Writes independent design arguments only. Does not see other panelists' arguments.",
+      "description": "Debate panelist. GLM 5.1. Writes independent arguments.",
       "mode": "subagent",
       "model": "acbpro/glm-5.1",
       "permission": {
@@ -81,7 +74,7 @@
       }
     },
     "debate-gpt55": {
-      "description": "Debate panelist using GPT-5.5. Writes independent design arguments only. Does not see other panelists' arguments.",
+      "description": "Debate panelist. GPT-5.5. Writes independent arguments.",
       "mode": "subagent",
       "model": "acbpro/gpt-5.5",
       "permission": {
@@ -90,7 +83,7 @@
       }
     },
     "debate-judge": {
-      "description": "Final debate judge using GPT-5.5. Compares all panel arguments, identifies agreements and conflicts, cites each model's strongest point, chooses a decision, lists rejected alternatives. Does not invent evidence not in the brief or arguments.",
+      "description": "Debate judge. Compares panel arguments and writes final decision.",
       "mode": "subagent",
       "model": "acbpro/gpt-5.5",
       "permission": {
