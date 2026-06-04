@@ -13,6 +13,20 @@ runner that can execute a task graph.
 - `templates/test-matrix.md`: comprehensive feature test matrix.
 - `templates/task-graph.md`: autonomous subagent task graph skeleton.
 
+## Pending Harness Hardening
+
+The approved design
+`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will move
+core verification from repeated Markdown commands into a canonical
+`scripts/harness.sh`, a `make verify` alias, and a versioned pre-push hook.
+
+Until that implementation exists, generated workflows must keep using the raw
+lint, format-check, unittest, and deploy-smoke commands below. After
+implementation, new workflows should use `scripts/harness.sh` or `make verify`
+for local verification and `scripts/harness.sh --pre-push` for pre-push
+simulation. The planned pre-push hook blocks when 5 or more `feat:` commits have
+landed since the latest reachable `refactor:` commit.
+
 ## Required Order
 
 Use this order for feature work:
@@ -53,6 +67,8 @@ The user must provide:
 ## Current Project Caveats
 
 - This workspace now has a `.git` repository for refactor checkpoints.
+- Machine-enforced harness hardening is designed but not implemented yet; see
+  `docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md`.
 - Dockerfiles exist. Podman smoke and Podman Compose smoke work locally.
 - Docker Compose CLI specifically is not installed in this shell; use
   `podman compose` here or re-check `docker compose` in another OpenCode shell.

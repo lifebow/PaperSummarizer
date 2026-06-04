@@ -40,12 +40,13 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 - Design: `docs/superpowers/specs/2026-05-29-arxiv-paper-radar-design.md`
 - Archive/query skeleton design: `docs/superpowers/specs/2026-06-03-paper-archive-query-skeleton-design.md`
 - Development harness design: `docs/superpowers/specs/2026-06-03-dev-harness-design.md`
+- Machine-enforced harness design: `docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md`
 - Plan: `docs/superpowers/plans/2026-05-29-arxiv-paper-radar-implementation.md`
 - The old design targets an MVP daemon that fetches recent arXiv AI papers, filters by relevance, downloads PDFs temporarily, summarizes and QA-gates with an LLM, writes `digests/YYYY-MM-DD.md`, and sends one Telegram recap at 21:00 Asia/Ho_Chi_Minh.
 
 ## Verification Status
 
-Last checked on 2026-06-04 from this workspace after Telegram expand feature:
+Last checked on 2026-06-04 from this workspace during machine-enforced harness review:
 
 ```bash
 python3 -m ruff check .
@@ -54,7 +55,7 @@ python3 -m unittest discover -v
 ```
 
 Result: ruff lint passed, ruff format-check passed, and unittest reported
-`Ran 115 tests in 1.693s - OK (skipped=8)`.
+`Ran 129 tests in 2.231s - OK (skipped=8)`.
 
 Warnings seen during tests:
 
@@ -75,7 +76,8 @@ Implemented v1 of the Telegram expand-paper feature (2026-06-04):
 - `paper_radar/daemon.py`: Papers sent with `[🔍 Expand]` inline keyboard button
 - `paper_radar/cli.py`: New subcommands: `serve-bot`, `expand-paper`, `set-webhook`, `delete-webhook`
 - `paper_radar/enrichment.py`: Fixed duplicate code block (lines 135-211 removed)
-- 115 tests pass (42 original + 38 expand feature tests + 35 other tests)
+- At implementation time, 115 tests passed (42 original + 38 expand feature
+  tests + 35 other tests)
 - Tests in `tests/test_bot_expand.py` cover: DB, LLM prompt, Telegram methods, digest rendering, expand pipeline, bot server callbacks, config, backward compatibility
 
 ### Usage
@@ -177,7 +179,8 @@ Implemented v1 of the historical archive feature (commit `2162aaf`):
 - `paper_radar/archive.py`: HistoricalCrawler (S2 bulk search) + ArchiveSearcher (SQLite LIKE)
 - CLI commands: `paper-radar archive-crawl` and `paper-radar archive-search`
 - Schema: added `primary_category` + `archive_status` columns, WAL mode, indexes
-- 42 tests pass (31 original + 10 archive unit + 1 harness)
+- At implementation time, 42 tests passed (31 original + 10 archive unit + 1
+  harness)
 - Integration tests in `tests/test_archive_integration.py` (skip if no API key)
 - Docker container builds and shows archive subcommands
 
@@ -188,7 +191,8 @@ Implemented enrichment pipeline v1 (commit `9f22680`):
 - `paper_radar/enrichment.py`: ArchiveEnricher, extract_text_from_pdf (PyMuPDF), extract_introduction
 - Schema: added `paper_texts` table for extracted text storage
 - CLI command: `paper-radar enrich` with `--limit` and `--dry-run`
-- 60 tests pass (42 original + 10 enrichment tests + 8 integration tests)
+- At implementation time, 60 tests passed (42 original + 10 enrichment tests +
+  8 integration tests)
 - Integration tests in `tests/test_enrichment.py` (skip if no API key)
 - Introduction detection: regex heading patterns + bounded-prefix fallback
 - Tested with real paper: arxiv.org/pdf/2606.03988 (97K chars, 3K intro extracted)
@@ -224,7 +228,29 @@ Implemented development harness:
 - Development workflow docs added in `docs/development.md`.
 - Light Ruff-driven refactor applied without intended behavior changes.
 
-Current verification: 42 tests pass, ruff check passes, ruff format passes.
+Initial harness verification at implementation time: 42 tests passed, ruff
+check passed, and ruff format passed. For the current baseline, use the
+Verification Status section above.
+
+### Machine-Enforced Harness Direction
+
+Pending design spec: `docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md`
+
+User approved hardening the harness so core gates are enforced by executable
+checks instead of Markdown memory. The planned implementation is:
+
+- `scripts/harness.sh` as the canonical lint/format/unittest entrypoint.
+- `Makefile` alias `make verify` pointing to the canonical script.
+- `.githooks/pre-push` calling `scripts/harness.sh --pre-push`.
+- `scripts/install-hooks.sh` setting `core.hooksPath=.githooks`.
+- a pre-push `refactor-due` hard gate that blocks when there are at least 5
+  `feat:` commits since the latest reachable `refactor:` commit.
+
+Current refactor cadence at review time: 3 `feat:` commits since the latest
+`refactor:` commit, so the planned gate would not block yet.
+
+This feature is not implemented yet. Until it is implemented, continue running
+the raw commands in the Verification Status section.
 
 ### OpenCode Config (`opencode.json`)
 
@@ -294,3 +320,5 @@ Important workflow rules encoded in docs:
 - Every 5 feature additions require a simplicity/reuse refactor checkpoint.
 - Commit before refactor; if there is no `.git`, refactor is blocked.
 - Docker/Compose smoke is a final gate when deploy files exist.
+- Pending machine-enforced harness design will replace memory-based verification
+  with `scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate.

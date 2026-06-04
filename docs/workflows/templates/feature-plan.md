@@ -26,6 +26,12 @@ Describe the feature in one sentence.
 The coordinator must orchestrate the work. The coordinator must not run
 mechanical checks directly when subagents or OpenCode runners are available.
 
+Harness hardening note: the approved design
+`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will add
+`scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate. Until
+that implementation exists, keep the explicit commands below. After it exists,
+prefer the canonical harness command in generated plans.
+
 ```yaml
 stages:
   - id: implement-feature
@@ -106,6 +112,10 @@ python3 -m unittest discover -v
 
 After every 5 feature additions, stop and run a refactor checkpoint before
 starting the next feature.
+
+After machine-enforced harness hardening is implemented, pre-push blocks when
+there are at least 5 `feat:` commits since the latest reachable `refactor:`
+commit.
 
 Refactor checkpoint checklist:
 

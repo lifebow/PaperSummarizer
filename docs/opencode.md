@@ -193,6 +193,27 @@ python3 -m unittest discover -v
 If lint fails, stop. Do not run tests until lint issues are fixed and
 format-check passes.
 
+## Pending Machine-Enforced Harness
+
+The approved design at
+`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will make
+the verification gates executable instead of memory-based.
+
+Planned changes:
+
+- add `scripts/harness.sh` as the canonical lint, format-check, and unittest
+  entrypoint,
+- add `make verify` as a short alias for the canonical script,
+- add a versioned `.githooks/pre-push` hook,
+- add `scripts/install-hooks.sh` to set `core.hooksPath=.githooks`,
+- make pre-push block when at least 5 `feat:` commits exist after the latest
+  reachable `refactor:` commit.
+
+Until that design is implemented, use the raw commands in this document. After
+implementation, generated plans should prefer `scripts/harness.sh` or
+`make verify` for local verification and `scripts/harness.sh --pre-push` for
+pre-push simulation.
+
 ## Regression Gate
 
 Every feature must prove old behavior still works. The full existing test suite
@@ -258,8 +279,8 @@ BLOCKED: cannot refactor safely because workspace has no .git repository.
 Create or initialize a git repo, or provide another versioned checkpoint first.
 ```
 
-This repository path is currently known to lack `.git` in the Codex desktop
-workspace. Re-check in OpenCode before refactoring.
+This repository currently has a `.git` directory. Re-check `git status --short`
+before refactoring and do not refactor without a clean or intentional checkpoint.
 
 ## Docker Deploy Smoke Gate
 

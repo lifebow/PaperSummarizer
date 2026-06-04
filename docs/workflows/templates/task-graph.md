@@ -5,6 +5,12 @@
 
 ## Graph
 
+Harness hardening note: the approved design
+`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will add
+`scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate. Until
+that implementation exists, keep the explicit command graph below. After it
+exists, prefer the canonical harness command in generated task graphs.
+
 ```yaml
 feature: FEATURE_TITLE
 coordinator:
