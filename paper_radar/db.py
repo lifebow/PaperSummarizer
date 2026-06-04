@@ -232,6 +232,17 @@ class PaperRadarDb:
                 (status, status, error, arxiv_id),
             )
 
+    def requeue_interrupted_papers(self) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE papers
+                SET archive_status = 'queued', last_status = 'queued'
+                WHERE archive_status IN ('processing', 'retry_later')
+                """,
+            )
+            return int(cursor.rowcount)
+
     def start_run(self) -> int:
         with self._connect() as conn:
             cursor = conn.execute("INSERT INTO runs (started_at) VALUES (?)", (now_utc_iso(),))

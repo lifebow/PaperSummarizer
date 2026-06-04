@@ -49,20 +49,51 @@ def _hash_paper(title: str, abstract: str) -> str:
 
 
 class DefaultPaperLlm:
-    def __init__(self, client):
+    def __init__(self, client, *, retry_delays: tuple[float, ...] = (5, 15, 30, 60, 120)):
         self.client = client
+        self.retry_delays = retry_delays
 
     def relevance(self, paper, topics):
         system, user = build_relevance_prompt(paper.title, paper.abstract, topics)
-        return self.client.complete_json(system, user)
+        return self._complete_with_retry(system, user, "relevance", paper.arxiv_id)
 
     def summarize(self, paper, full_text):
         system, user = build_summary_prompt(paper.title, paper.abstract, full_text)
-        return self.client.complete_json(system, user)
+        return self._complete_with_retry(system, user, "summary", paper.arxiv_id)
 
     def qa(self, paper, summary, full_text):
         system, user = build_qa_prompt(summary, paper.abstract, full_text)
-        return self.client.complete_json(system, user)
+        return self._complete_with_retry(system, user, "qa", paper.arxiv_id)
+
+    def _complete_with_retry(self, system: str, user: str, stage: str, arxiv_id: str) -> dict[str, Any]:
+        attempts = len(self.retry_delays) + 1
+        for attempt in range(attempts):
+            try:
+                return self.client.complete_json(system, user)
+            except Exception as exc:
+                if attempt >= len(self.retry_delays) or not _is_retryable_llm_error(exc):
+                    raise
+                delay = self.retry_delays[attempt]
+                logger.warning(
+                    "LLM %s retry %d/%d for %s after %s: %s",
+                    stage,
+                    attempt + 1,
+                    len(self.retry_delays),
+                    arxiv_id,
+                    _format_delay(delay),
+                    exc,
+                )
+                time.sleep(delay)
+        raise RuntimeError("unreachable retry loop")
+
+
+def _is_retryable_llm_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(code in text for code in ("429", "500", "502", "503", "504", "too many requests", "timeout"))
+
+
+def _format_delay(delay: float) -> str:
+    return f"{delay:g}s"
 
 
 class PaperRadarService:
@@ -94,6 +125,9 @@ class PaperRadarService:
 
     def run_once(self, *, now_date: str | None = None, now_time: str | None = None) -> dict[str, int]:
         self.db.initialize()
+        requeued_count = self.db.requeue_interrupted_papers()
+        if requeued_count:
+            logger.info("Requeued %d interrupted papers", requeued_count)
         run_id = self.db.start_run()
         since = self.db.get_state("last_successful_fetch_at") or default_since(
             self.config.daemon.first_run_lookback_hours
@@ -266,6 +300,8 @@ class PaperRadarService:
                 return (paper, paper_hash, score)
             except Exception as exc:
                 logger.warning("Relevance scoring failed for %s: %s", paper.arxiv_id, exc)
+                if _is_retryable_llm_error(exc):
+                    self.db.update_paper_archive_status(paper.arxiv_id, "retry_later", str(exc))
                 return (paper, paper_hash, None)
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -325,6 +361,8 @@ class PaperRadarService:
                             summary = self.llm.summarize(paper, summary_text)
                         except Exception as exc:
                             logger.warning("Summary failed for %s: %s", paper.arxiv_id, exc)
+                            if _is_retryable_llm_error(exc):
+                                self.db.update_paper_archive_status(paper.arxiv_id, "retry_later", str(exc))
                             return False
 
                     # QA LLM
@@ -334,10 +372,13 @@ class PaperRadarService:
                             qa = self.llm.qa(paper, summary, paper.abstract)
                         except Exception as exc:
                             logger.warning("QA failed for %s: %s", paper.arxiv_id, exc)
+                            if _is_retryable_llm_error(exc):
+                                self.db.update_paper_archive_status(paper.arxiv_id, "retry_later", str(exc))
+                                return False
                             qa = {
-                                "relevance_score": 10,
-                                "grounding_score": 10,
-                                "idea_score": 10,
+                                "relevance_score": 0,
+                                "grounding_score": 0,
+                                "idea_score": 0,
                                 "qa_reason": f"QA error: {exc}",
                             }
                     elif not self.llm:

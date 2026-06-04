@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from paper_radar.config import AppConfig, FilterConfig, PathConfig, PipelineConfig, TelegramConfig, TopicConfig
-from paper_radar.daemon import PaperRadarService, RunBudget
+from paper_radar.daemon import DefaultPaperLlm, PaperRadarService, RunBudget
 from paper_radar.db import PaperRadarDb
 from paper_radar.extraction import ExtractedText
 from paper_radar.retrieval import PaperMetadata
@@ -20,6 +20,25 @@ class TelegramDaemonTests(unittest.TestCase):
 
         self.assertTrue(budget.can_call())
         self.assertEqual(budget.describe(), "3/unlimited")
+
+    def test_default_paper_llm_retries_retryable_errors(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def complete_json(self, system, user):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("HTTP Error 429: Too Many Requests")
+                return {"relevance_score": 8}
+
+        client = FakeClient()
+        llm = DefaultPaperLlm(client, retry_delays=(0,))
+
+        result = llm.relevance(PaperMetadata(arxiv_id="2606.00001", title="T", abstract="A"), ["agent"])
+
+        self.assertEqual(result["relevance_score"], 8)
+        self.assertEqual(client.calls, 2)
 
     def test_telegram_sender_posts_message(self):
         captured = {}
@@ -186,6 +205,63 @@ class TelegramDaemonTests(unittest.TestCase):
             self.assertEqual(result["accepted_count"], 2)
             self.assertEqual(downloader.downloaded, ["2605.00002", "2605.00001"])
             self.assertEqual(db.queued_papers(limit=10), [])
+
+    def test_retryable_qa_failure_is_not_auto_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "data" / "radar.sqlite3")
+            config = AppConfig(
+                topics=TopicConfig(categories=["cs.AI"], queries=["LLM agent"]),
+                pipeline=PipelineConfig(max_papers_per_run=1),
+                paths=PathConfig(
+                    database=root / "data" / "radar.sqlite3",
+                    tmp_pdfs=root / "data" / "tmp_pdfs",
+                    digests=root / "digests",
+                ),
+            )
+            paper = PaperMetadata(arxiv_id="2605.99999", title="Retry Paper", abstract="abstract", pdf_url="pdf")
+
+            class FakeRetriever:
+                def search_recent(self, queries, categories, *, since, limit):
+                    return [paper]
+
+            class FakeDownloader:
+                def download(self, paper, tmp_dir):
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+                    path = tmp_dir / f"{paper.arxiv_id}.pdf"
+                    path.write_bytes(b"%PDF")
+                    return path
+
+            class FakeExtractor:
+                def extract(self, path):
+                    return ExtractedText(text="full text " * 50, extractor_name="primary")
+
+            class FakeLlm:
+                def relevance(self, paper, topics):
+                    return {"relevance_score": 8, "reason": "relevant"}
+
+                def summarize(self, paper, full_text):
+                    return {"what_the_paper_does": "Does work"}
+
+                def qa(self, paper, summary, full_text):
+                    raise RuntimeError("HTTP Error 429: Too Many Requests")
+
+            fake_telegram = type("FakeTelegram", (), {"send_message": lambda self, msg, **kwargs: None})()
+            service = PaperRadarService(
+                config=config,
+                db=db,
+                retriever=FakeRetriever(),
+                downloader=FakeDownloader(),
+                extractor=FakeExtractor(),
+                llm=FakeLlm(),
+                telegram=fake_telegram,
+            )
+
+            result = service.run_once(now_date="2026-05-29", now_time="15:00")
+            saved = db.get_paper_by_arxiv_id("2605.99999")
+
+            self.assertEqual(result["accepted_count"], 0)
+            self.assertEqual(saved["archive_status"], "retry_later")
 
     def test_send_daily_recap_marks_sent(self):
         sent_messages = []
