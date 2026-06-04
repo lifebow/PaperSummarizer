@@ -2,5 +2,22 @@ services:
   paper-radar:
     build: .
     image: paper-radar:latest
+    container_name: paper-radar
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./digests:/app/digests
     entrypoint: ["paper-radar"]
-    command: ["--help"]
+    command: ["watch"]
+
+  paper-radar-bot:
+    build: .
+    image: paper-radar:latest
+    container_name: paper-radar-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    entrypoint: ["paper-radar"]
+    command: ["serve-bot", "--poll"]

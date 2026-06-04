@@ -17,6 +17,15 @@ filters:
   grounding_threshold: 7
   idea_threshold: 6
 
+pipeline:
+  llm_concurrency: 4
+  download_concurrency: 3
+  max_papers_per_run: 50
+  max_llm_calls_per_run: 80
+  max_summary_candidates_per_run: 20
+  enable_relevance_cache: true
+  merge_summary_qa: false
+
 paths:
   database: "data/paper_radar.sqlite3"
   tmp_pdfs: "data/tmp_pdfs"
