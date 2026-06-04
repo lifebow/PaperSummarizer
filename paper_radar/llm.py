@@ -75,6 +75,9 @@ def build_relevance_prompt(title: str, abstract: str, topics: list[str]) -> tupl
     return system, user
 
 
+_MAX_TEXT_CHARS = 15000
+
+
 def build_summary_prompt(title: str, abstract: str, full_text_markdown: str) -> tuple[str, str]:
     system = (
         "You summarize AI papers for idea mining. Return strict JSON with keys: "
@@ -85,7 +88,7 @@ def build_summary_prompt(title: str, abstract: str, full_text_markdown: str) -> 
         {
             "title": title,
             "abstract": abstract,
-            "full_text_markdown": full_text_markdown,
+            "full_text_markdown": _truncate(full_text_markdown),
             "background_level": "deep but concise, especially math intuition and notation when needed",
         },
         ensure_ascii=False,
@@ -100,11 +103,17 @@ def build_qa_prompt(summary: dict[str, Any], abstract: str, full_text_markdown: 
             "task": "Return relevance_score, grounding_score, idea_score, qa_reason, evidence_snippets.",
             "summary": summary,
             "abstract": abstract,
-            "full_text_markdown": full_text_markdown,
+            "full_text_markdown": _truncate(full_text_markdown),
         },
         ensure_ascii=False,
     )
     return system, user
+
+
+def _truncate(text: str, *, limit: int = _MAX_TEXT_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n... [truncated]"
 
 
 def _extract_json_object(content: str) -> dict[str, Any]:

@@ -9,11 +9,10 @@ from .config import AppConfig
 from .db import PaperRadarDb
 from .digest import (
     append_digest_batch,
-    render_telegram_diff,
-    render_telegram_full,
+    render_paper_short,
     render_telegram_recap,
 )
-from .extraction import PdfExtractor, process_pdf_with_cleanup
+from .extraction import PdfExtractor, extract_introduction, process_pdf_with_cleanup
 from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, passes_quality_gate
 from .retrieval import PdfDownloader, make_default_retriever
 from .telegram import TelegramSender
@@ -98,9 +97,11 @@ class PaperRadarService:
 
                     def process(path, *, current_paper=paper, current_paper_id=paper_id, current_relevance=relevance):
                         extracted = self.extractor.extract(path)
-                        summary = self.llm.summarize(current_paper, extracted.text) if self.llm else {}
+                        intro = extract_introduction(extracted.text, current_paper.abstract)
+                        summary_text = f"{current_paper.abstract}\n\n{intro}"
+                        summary = self.llm.summarize(current_paper, summary_text) if self.llm else {}
                         qa = (
-                            self.llm.qa(current_paper, summary, extracted.text)
+                            self.llm.qa(current_paper, summary, summary_text)
                             if self.llm
                             else {
                                 "relevance_score": 10,
@@ -191,15 +192,16 @@ class PaperRadarService:
         self.db.initialize()
         last_sent = self.db.get_state("last_daily_full_sent_at")
         if last_sent == digest_date:
-            message = render_telegram_diff(digest_date, batch_time, accepted_batch)
-            if message:
-                self.telegram.send_message(message)
+            for paper in accepted_batch:
+                msg = render_paper_short(paper)
+                if msg:
+                    self.telegram.send_message(msg)
             return
         papers = self.db.accepted_results_for_date(digest_date)
-        message = render_telegram_full(digest_date, papers)
-        if not message:
-            return
-        self.telegram.send_message(message)
+        for paper in papers:
+            msg = render_paper_short(paper)
+            if msg:
+                self.telegram.send_message(msg)
         self.db.set_state("last_daily_full_sent_at", digest_date)
 
     def watch(self) -> None:
