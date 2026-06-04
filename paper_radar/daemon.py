@@ -10,7 +10,6 @@ from .db import PaperRadarDb
 from .digest import (
     append_digest_batch,
     render_paper_short,
-    render_telegram_recap,
 )
 from .extraction import PdfExtractor, extract_introduction, process_pdf_with_cleanup
 from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, passes_quality_gate
@@ -101,7 +100,7 @@ class PaperRadarService:
                         summary_text = f"{current_paper.abstract}\n\n{intro}"
                         summary = self.llm.summarize(current_paper, summary_text) if self.llm else {}
                         qa = (
-                            self.llm.qa(current_paper, summary, summary_text)
+                            self.llm.qa(current_paper, summary, current_paper.abstract)
                             if self.llm
                             else {
                                 "relevance_score": 10,
@@ -170,11 +169,13 @@ class PaperRadarService:
         if self.db.was_recap_sent(digest_date):
             return False
         papers = self.db.accepted_results_for_date(digest_date)
-        message = render_telegram_recap(digest_date, papers)
-        if not message:
+        if not papers:
             return False
         try:
-            self.telegram.send_message(message)
+            for paper in papers:
+                msg = render_paper_short(paper)
+                if msg:
+                    self.telegram.send_message(msg)
             self.db.mark_recap(digest_date, "sent")
             return True
         except Exception as exc:

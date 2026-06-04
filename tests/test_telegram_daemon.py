@@ -137,7 +137,8 @@ class TelegramDaemonTests(unittest.TestCase):
 
         self.assertTrue(sent)
         self.assertTrue(was_sent)
-        self.assertIn("Paper Radar recap", sent_messages[0])
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("Paper", sent_messages[0])
 
     def test_hourly_full_first_of_day_marks_state_and_sends_all(self):
         sent_messages = []
