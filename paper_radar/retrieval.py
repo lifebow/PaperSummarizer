@@ -222,7 +222,7 @@ class ArxivClient:
                     )
 
         list_papers = papers[:limit] if paper_exists is None else papers[: min(len(papers), limit)]
-        logger.info("arXiv list page returned %d papers for %s since %s", len(list_papers), archive, since_date)
+        logger.info("arXiv recent list page returned %d papers for %s", len(list_papers), archive)
         return self._fetch_abs_metadata(list_papers, since_date)
 
     def _fetch_abs_metadata(self, list_papers: list[PaperMetadata], since_date: str) -> list[PaperMetadata]:
@@ -237,8 +237,7 @@ class ArxivClient:
                 abs_paper = None
 
             paper = self._merge_abs_with_list(abs_paper, list_paper)
-            if not paper.published_at or paper.published_at >= since_date:
-                papers.append(paper)
+            papers.append(paper)
             if (index + 1) % 50 == 0:
                 logger.info("arXiv abs pages fetched: %d/%d", index + 1, len(list_papers))
         return papers

@@ -169,6 +169,26 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(results[0].title, "List Title")
         self.assertEqual(results[0].abstract, "")
 
+    def test_arxiv_recent_keeps_recent_list_papers_regardless_of_since_date(self):
+        list_html = '<dt><a href ="/abs/2606.00001">arXiv:2606.00001</a></dt><dd></dd>'
+        abs_html = """
+        <meta name="citation_title" content="Yesterday Recent Paper">
+        <meta name="citation_date" content="2026/06/03">
+        <blockquote class="abstract mathjax"><span class="descriptor">Abstract:</span>Still recent.</blockquote>
+        """
+        session = FakeSession(
+            {
+                "https://arxiv.org/list/cs/recent?skip=0&show=1000": list_html,
+                "https://arxiv.org/abs/2606.00001": abs_html,
+            }
+        )
+
+        results = ArxivClient(client=session).search_recent(["cs.AI"], since="2026-06-04", limit=10)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].arxiv_id, "2606.00001")
+        self.assertEqual(results[0].published_at, "2026-06-03")
+
     def test_arxiv_client_skips_existing_db_papers_before_abs_fetch(self):
         list_html = """
         <dt><a href ="/abs/2606.00001">arXiv:2606.00001</a></dt>
