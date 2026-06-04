@@ -24,6 +24,8 @@ class ProjectHarnessTests(unittest.TestCase):
         self.assertIn("python3 -m ruff check .", development)
         self.assertIn("python3 -m ruff format --check .", development)
         self.assertIn("No real network calls", development)
+        self.assertIn("Harness Verification Record", development)
+        self.assertIn("OpenCode State And Sandbox", development)
 
     def test_opencode_entrypoint_loads_workflow_docs(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -48,6 +50,19 @@ class ProjectHarnessTests(unittest.TestCase):
         self.assertIn("opencode", opencode)
         self.assertIn("runner: subagent", opencode)
         self.assertIn("runner: opencode", opencode)
+        self.assertIn("Subagent Proof Levels", opencode)
+        self.assertIn("config resolve", opencode)
+        self.assertIn("runner execution", opencode)
+        self.assertIn("model-backed OpenCode execution", opencode)
+        self.assertIn("~/.local/share/opencode", opencode)
+
+    def test_env_example_documents_secret_groups_and_skip_behavior(self):
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("# Semantic Scholar integration", env_example)
+        self.assertIn("# OpenAI-compatible LLM integration", env_example)
+        self.assertIn("# Telegram recap integration", env_example)
+        self.assertIn("# Missing integration secrets should skip integration tests", env_example)
 
     def test_workflow_templates_encode_quality_gates(self):
         feature_plan = (ROOT / "docs" / "workflows" / "templates" / "feature-plan.md").read_text(encoding="utf-8")

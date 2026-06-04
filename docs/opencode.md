@@ -155,6 +155,31 @@ Subagents must report:
 - files changed if they edited files,
 - blockers if the environment is missing a tool.
 
+## Subagent Proof Levels
+
+Use precise language when reporting whether this harness works:
+
+- config resolve: `opencode debug config` and `opencode debug agent <name>`
+  show that `opencode.json` is valid and the named agent resolves to
+  `mode: subagent`.
+- runner execution: a local subagent-capable runner, such as Codex subagents,
+  actually spawns a worker that runs commands and returns a report.
+- model-backed OpenCode execution: `opencode run --agent <name> ...` starts an
+  OpenCode session with the configured model/provider and the agent performs the
+  assigned task.
+
+Docs and unit tests prove only that the harness contract exists. Config resolve
+proves OpenCode can read the contract. Runner execution proves delegation works
+in the current tool environment. Model-backed OpenCode execution proves the full
+OpenCode path, but it may send task context to the configured model provider and
+must respect the user's approval and data-export policy.
+
+OpenCode stores runtime state outside this repository, including
+`~/.local/share/opencode` and `~/.local/state/opencode`. If OpenCode fails with
+`SQLITE_READONLY`, `PRAGMA wal_checkpoint(PASSIVE)`, or `EPERM` while creating
+lock files, record it as an environment blocker and re-run with approved access
+before judging the harness.
+
 ## Lint Before Test Gate
 
 Lint and format-check must run before full tests:

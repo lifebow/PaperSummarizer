@@ -5,9 +5,9 @@
 Use the lightweight harness before and after refactors:
 
 ```bash
-python3 -m unittest discover -v
 python3 -m ruff check .
 python3 -m ruff format --check .
+python3 -m unittest discover -v
 ```
 
 Use Ruff to apply formatting:
@@ -41,6 +41,34 @@ SEMANTIC_SCHOLAR_API_KEYS=your_key python3 -m unittest tests.test_archive_integr
 # Run all tests (unit tests pass offline, integration tests skip)
 python3 -m unittest discover -v
 ```
+
+## Harness Verification Record
+
+After each harness check, update the handoff notes in `AGENTS.md` with:
+
+- exact commands run,
+- exit codes and concise pass/fail result,
+- test count and skipped integration tests,
+- important warnings,
+- runner used: coordinator, Codex subagent, OpenCode config resolve, or
+  model-backed OpenCode execution,
+- blockers such as missing Docker Compose, missing API secrets, sandboxed
+  OpenCode state, or policy limits on external model calls.
+
+Do not claim subagent verification from docs alone. Record which proof level was
+actually observed.
+
+## OpenCode State And Sandbox
+
+OpenCode stores runtime state outside this repository, including
+`~/.local/share/opencode` and `~/.local/state/opencode`. Commands such as
+`opencode agent list`, `opencode debug config`, and `opencode run --agent ...`
+may need write access to that state for SQLite WAL checkpoints and lock files.
+
+If those commands fail in a sandbox with `SQLITE_READONLY`, `PRAGMA
+wal_checkpoint(PASSIVE)`, or `EPERM` on an OpenCode lock path, treat it as an
+environment blocker. Re-run in an approved shell or record the blocker instead
+of concluding that `opencode.json` is invalid.
 
 ## Refactor Rules
 

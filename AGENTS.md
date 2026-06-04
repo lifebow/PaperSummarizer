@@ -44,7 +44,8 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 
 ## Verification Status
 
-Last checked on 2026-06-03 from this workspace:
+Last checked on 2026-06-03 from this workspace after harness documentation
+hardening:
 
 ```bash
 python3 -m ruff check .
@@ -52,12 +53,32 @@ python3 -m ruff format --check .
 python3 -m unittest discover -v
 ```
 
-Result: `Ran 60 tests in 1.334s - OK (skipped=8)`.
+Result: ruff lint passed, ruff format-check passed, and unittest reported
+`Ran 61 tests in 1.650s - OK (skipped=8)`.
 
 Warnings seen during tests:
 
 - `RequestsDependencyWarning` about urllib3/chardet/charset_normalizer versions.
 - `paperscraper.load_dumps` warnings that biorxiv/chemrxiv/medrxiv dumps are missing.
+- PyMuPDF/SWIG deprecation warnings.
+
+Harness proof levels observed on 2026-06-03:
+
+- Docs/unit harness: pass (`tests/test_project_harness.py`).
+- Codex subagent runner execution: pass; a spawned subagent ran the local
+  lint, format-check, and unittest commands and returned results.
+- OpenCode config resolve: pass when allowed to write OpenCode state outside
+  the repo; `opencode debug config` and `opencode debug agent lint`,
+  `implement`, and `debate-judge` resolved the project agents.
+- Model-backed OpenCode execution: not verified in this Codex session because
+  `opencode run --agent lint ...` was blocked by data-export policy for
+  external model-backed execution.
+
+OpenCode caveat: inside a filesystem sandbox, `opencode agent list` can fail
+with `SQLITE_READONLY`, `PRAGMA wal_checkpoint(PASSIVE)`, or `EPERM` on
+`~/.local/state/opencode` lock paths because OpenCode needs write access to
+`~/.local/share/opencode` and `~/.local/state/opencode`. Treat that as an
+environment blocker, not as proof that `opencode.json` is invalid.
 
 Unit tests (mock-based): `tests/test_archive.py` — HistoricalCrawler, ArchiveSearcher, schema migration.
 Unit tests (mock-based): `tests/test_enrichment.py` — extract_introduction, extract_text_from_pdf, db schema, enricher batch.
