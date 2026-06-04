@@ -30,10 +30,17 @@ class RunBudget:
         self.calls_used = 0
 
     def can_call(self) -> bool:
+        if self.max_calls <= 0:
+            return True
         return self.calls_used < self.max_calls
 
     def record_call(self) -> None:
         self.calls_used += 1
+
+    def describe(self) -> str:
+        if self.max_calls <= 0:
+            return f"{self.calls_used}/unlimited"
+        return f"{self.calls_used}/{self.max_calls}"
 
 
 def _hash_paper(title: str, abstract: str) -> str:
@@ -156,7 +163,7 @@ class PaperRadarService:
         results: list[dict[str, Any]] = []
         processed_count = 0
         while True:
-            if self.llm and not budget.can_call():
+            if self.llm and budget.max_calls > 0 and not budget.can_call():
                 logger.info(
                     "Stopping queue drain: LLM budget exhausted (%d/%d)",
                     budget.calls_used,
@@ -184,11 +191,10 @@ class PaperRadarService:
 
             candidates = self._phase1_relevance(new_papers, budget)
             logger.info(
-                "Phase 1 done: %d/%d passed relevance (budget used: %d/%d)",
+                "Phase 1 done: %d/%d passed relevance (LLM calls used: %s)",
                 len(candidates),
                 len(new_papers),
-                budget.calls_used,
-                budget.max_calls,
+                budget.describe(),
             )
 
             results.extend(self._phase2_summarize_qa(candidates, run_id, digest_date, batch_time, budget))

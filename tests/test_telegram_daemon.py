@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from paper_radar.config import AppConfig, FilterConfig, PathConfig, PipelineConfig, TelegramConfig, TopicConfig
-from paper_radar.daemon import PaperRadarService
+from paper_radar.daemon import PaperRadarService, RunBudget
 from paper_radar.db import PaperRadarDb
 from paper_radar.extraction import ExtractedText
 from paper_radar.retrieval import PaperMetadata
@@ -11,6 +11,16 @@ from paper_radar.telegram import TelegramSender
 
 
 class TelegramDaemonTests(unittest.TestCase):
+    def test_run_budget_zero_means_unlimited(self):
+        budget = RunBudget(0)
+
+        for _ in range(3):
+            self.assertTrue(budget.can_call())
+            budget.record_call()
+
+        self.assertTrue(budget.can_call())
+        self.assertEqual(budget.describe(), "3/unlimited")
+
     def test_telegram_sender_posts_message(self):
         captured = {}
 

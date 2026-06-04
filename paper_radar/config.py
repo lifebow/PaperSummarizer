@@ -67,7 +67,7 @@ class PipelineConfig:
     llm_concurrency: int = 4
     download_concurrency: int = 3
     max_papers_per_run: int = 50
-    max_llm_calls_per_run: int = 80
+    max_llm_calls_per_run: int = 0
     max_summary_candidates_per_run: int = 20
     enable_relevance_cache: bool = True
     merge_summary_qa: bool = False
@@ -153,7 +153,7 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
             llm_concurrency=int(pipeline.get("llm_concurrency", 4)),
             download_concurrency=int(pipeline.get("download_concurrency", 3)),
             max_papers_per_run=int(pipeline.get("max_papers_per_run", 50)),
-            max_llm_calls_per_run=int(pipeline.get("max_llm_calls_per_run", 80)),
+            max_llm_calls_per_run=int(pipeline.get("max_llm_calls_per_run", 0)),
             max_summary_candidates_per_run=int(pipeline.get("max_summary_candidates_per_run", 20)),
             enable_relevance_cache=bool(pipeline.get("enable_relevance_cache", True)),
             merge_summary_qa=bool(pipeline.get("merge_summary_qa", False)),
