@@ -18,7 +18,7 @@ filters:
   idea_threshold: 6
 
 pipeline:
-  llm_concurrency: 4
+  llm_concurrency: 1
   download_concurrency: 3
   max_papers_per_run: 200
   max_llm_calls_per_run: 0
