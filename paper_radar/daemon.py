@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from ._s2 import PaperMetadata
 from ._time import default_since, local_now, now_utc_iso
 from .config import AppConfig
 from .db import PaperRadarDb
@@ -14,7 +15,7 @@ from .digest import (
     render_paper_short,
 )
 from .extraction import PdfExtractor, extract_introduction, process_pdf_with_cleanup
-from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, passes_quality_gate
+from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, normalize_score, passes_quality_gate
 from .retrieval import PdfDownloader, _normalize_arxiv_id, make_default_retriever
 from .telegram import TelegramSender, make_expand_keyboard
 
@@ -74,6 +75,7 @@ class PaperRadarService:
         self.retriever = retriever or make_default_retriever(
             config.semantic_scholar.api_keys,
             config.semantic_scholar.fields,
+            paper_exists=lambda arxiv_id: self.db.get_paper_by_arxiv_id(_normalize_arxiv_id(arxiv_id)) is not None,
         )
         self.downloader = downloader or PdfDownloader()
         self.extractor = extractor or PdfExtractor()
@@ -97,49 +99,73 @@ class PaperRadarService:
         budget = RunBudget(self.config.pipeline.max_llm_calls_per_run)
 
         try:
-            papers = self.retriever.search_recent(
+            found_papers = self.retriever.search_recent(
                 self.config.topics.queries,
                 self.config.topics.categories,
                 since=since,
-                limit=self.config.filters.max_papers_per_batch,
+                limit=1000,
             )
-            found_count = len(papers)
-            self._enrich_author_affiliations(papers)
-
-            # Deduplicate — skip papers already in DB
-            new_papers: list[Any] = []
-            for paper in papers:
+            found_count = len(found_papers)
+            queued_count = 0
+            for paper in found_papers:
                 paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
-                if not self.db.get_paper_by_arxiv_id(paper.arxiv_id):
+                record = paper.to_record()
+                record["archive_status"] = "queued"
+                self.db.upsert_paper(record)
+                queued_count += 1
+
+            processed_count = 0
+            while True:
+                if self.llm and not budget.can_call():
+                    logger.info(
+                        "Stopping queue drain: LLM budget exhausted (%d/%d)",
+                        budget.calls_used,
+                        budget.max_calls,
+                    )
+                    break
+
+                papers = self._queued_paper_metadata(limit=self.config.pipeline.max_papers_per_run)
+                if not papers:
+                    break
+                self._enrich_author_affiliations(papers)
+
+                new_papers: list[Any] = []
+                for paper in papers:
+                    paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
                     new_papers.append(paper)
 
-            # Cap at max_papers_per_run
-            new_papers = new_papers[: self.config.pipeline.max_papers_per_run]
+                processed_count += len(new_papers)
+                logger.info(
+                    "Queued %d new papers; processing queued batch of %d papers (total this run: %d)",
+                    queued_count,
+                    len(new_papers),
+                    processed_count,
+                )
 
-            # --- Phase 1: Relevance scoring (parallel, cheap) ---
-            candidates = self._phase1_relevance(new_papers, budget)
-            logger.info(
-                "Phase 1 done: %d/%d passed relevance (budget used: %d/%d)",
-                len(candidates),
-                len(new_papers),
-                budget.calls_used,
-                budget.max_calls,
-            )
+                # --- Phase 1: Relevance scoring (parallel, cheap) ---
+                candidates = self._phase1_relevance(new_papers, budget)
+                logger.info(
+                    "Phase 1 done: %d/%d passed relevance (budget used: %d/%d)",
+                    len(candidates),
+                    len(new_papers),
+                    budget.calls_used,
+                    budget.max_calls,
+                )
 
-            # --- Phase 2: Summarize + QA (parallel, expensive) ---
-            phase2_results = self._phase2_summarize_qa(
-                candidates,
-                run_id,
-                digest_date,
-                batch_time,
-                budget,
-            )
-            for result in phase2_results:
-                if result.get("accepted"):
-                    accepted_count += 1
-                    accepted_for_digest.append(result)
-                elif result.get("error"):
-                    error_count += 1
+                # --- Phase 2: Summarize + QA (parallel, expensive) ---
+                phase2_results = self._phase2_summarize_qa(
+                    candidates,
+                    run_id,
+                    digest_date,
+                    batch_time,
+                    budget,
+                )
+                for result in phase2_results:
+                    if result.get("accepted"):
+                        accepted_count += 1
+                        accepted_for_digest.append(result)
+                    elif result.get("error"):
+                        error_count += 1
 
             # Sort deterministically before writing
             accepted_for_digest.sort(key=lambda p: p.get("arxiv_id", ""))
@@ -160,6 +186,30 @@ class PaperRadarService:
                 error_count + 1,
             )
             raise
+
+    def _queued_paper_metadata(self, *, limit: int) -> list[PaperMetadata]:
+        papers: list[PaperMetadata] = []
+        for row in self.db.queued_papers(limit=limit):
+            papers.append(
+                PaperMetadata(
+                    arxiv_id=row.get("arxiv_id", ""),
+                    semantic_scholar_id=row.get("semantic_scholar_id", ""),
+                    title=row.get("title", ""),
+                    authors=row.get("authors", []),
+                    author_s2_ids=row.get("author_s2_ids", []),
+                    author_affiliations=row.get("author_affiliations", []),
+                    abstract=row.get("abstract", ""),
+                    semantic_scholar_tldr=row.get("semantic_scholar_tldr", ""),
+                    categories=row.get("categories", []),
+                    primary_category=row.get("primary_category", ""),
+                    published_at=row.get("published_at", ""),
+                    updated_at=row.get("updated_at", ""),
+                    pdf_url=row.get("pdf_url", ""),
+                    semantic_scholar_url=row.get("semantic_scholar_url", ""),
+                    source=row.get("source", ""),
+                )
+            )
+        return papers
 
     def _phase1_relevance(
         self,
@@ -219,6 +269,8 @@ class PaperRadarService:
                         )
                     if float(score.get("relevance_score", 0)) >= self.config.filters.relevance_threshold:
                         candidates.append((paper, score))
+                    else:
+                        self.db.update_paper_archive_status(paper.arxiv_id, "rejected_relevance")
 
         return candidates
 
@@ -240,6 +292,7 @@ class PaperRadarService:
         def process_one(paper: Any, relevance: dict[str, Any]) -> dict[str, Any] | None:
             try:
                 paper_id = self.db.upsert_paper(paper.to_record())
+                self.db.update_paper_archive_status(paper.arxiv_id, "processing")
                 pdf_path = self.downloader.download(paper, self.config.paths.tmp_pdfs)
 
                 result_holder: dict[str, Any] = {}
@@ -290,18 +343,18 @@ class PaperRadarService:
                     )
                     enriched_summary = dict(summary)
                     enriched_summary["qa_scores"] = {
-                        "relevance": qa.get("relevance_score", 0),
-                        "grounding": qa.get("grounding_score", 0),
-                        "idea": qa.get("idea_score", 0),
+                        "relevance": normalize_score(qa.get("relevance_score", 0)),
+                        "grounding": normalize_score(qa.get("grounding_score", 0)),
+                        "idea": normalize_score(qa.get("idea_score", 0)),
                     }
                     enriched_summary["qa_reason"] = qa.get("qa_reason", "")
 
                     result_holder["data"] = {
                         **paper.to_record(),
                         "summary": enriched_summary,
-                        "relevance_score": qa.get("relevance_score", 0),
-                        "grounding_score": qa.get("grounding_score", 0),
-                        "idea_score": qa.get("idea_score", 0),
+                        "relevance_score": normalize_score(qa.get("relevance_score", 0)),
+                        "grounding_score": normalize_score(qa.get("grounding_score", 0)),
+                        "idea_score": normalize_score(qa.get("idea_score", 0)),
                         "paper_id": paper_id,
                         "run_id": run_id,
                         "digest_date": digest_date,
@@ -320,19 +373,31 @@ class PaperRadarService:
                 return None
             except Exception as exc:
                 logger.exception("Paper processing failed for %s: %s", paper.arxiv_id, exc)
+                self.db.update_paper_archive_status(paper.arxiv_id, "error", str(exc))
                 return {"error": str(exc), "arxiv_id": paper.arxiv_id}
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(process_one, p, r): p for p, r in candidates}
             for future in as_completed(futures):
+                paper = futures[future]
                 result = future.result()
                 if result and "error" in result:
+                    logger.warning("Paper %s errored: %s", paper.arxiv_id, result["error"])
                     results.append(result)
                 elif result:
                     # Sequential DB write
                     self._record_paper_result(result)
                     if result.get("accepted"):
+                        logger.info("Paper accepted: %s", paper.arxiv_id)
                         results.append(result)
+                    else:
+                        logger.info(
+                            "Paper rejected by QA gate: %s (rel=%.1f gnd=%.1f idea=%.1f)",
+                            paper.arxiv_id,
+                            result.get("relevance_score", 0),
+                            result.get("grounding_score", 0),
+                            result.get("idea_score", 0),
+                        )
 
         return results
 
@@ -351,6 +416,10 @@ class PaperRadarService:
             qa_reason=str(data.get("qa", {}).get("qa_reason", "")),
             accepted=data["accepted"],
             digest_date=data["digest_date"],
+        )
+        self.db.update_paper_archive_status(
+            data["arxiv_id"],
+            "accepted" if data["accepted"] else "rejected_qa",
         )
 
     def send_daily_recap(self, digest_date: str) -> bool:

@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import logging
-import time
-import urllib.parse
-import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ._http import USER_AGENT, download_file, json_get, text_get
+from ._http import USER_AGENT, download_file, json_get
 from ._s2 import PaperMetadata, s2_item_to_paper  # noqa: F401 - re-exported
 
 logger = logging.getLogger(__name__)
@@ -92,71 +89,251 @@ class SemanticScholarClient:
                 logger.warning("Failed to fetch affiliation for author %s: %s", author_id, exc)
         return result
 
+    def lookup_by_arxiv_id(self, arxiv_id: str) -> dict[str, Any] | None:
+        """Lookup a single paper by arXiv ID. Returns raw S2 item or None."""
+        headers: dict[str, str] = {"User-Agent": USER_AGENT}
+        if self.api_keys:
+            headers["x-api-key"] = self.api_keys[self._next_key % len(self.api_keys)]
+            self._next_key += 1
+        try:
+            return self.http_get(
+                f"https://api.semanticscholar.org/graph/v1/paper/ArXiv:{arxiv_id}",
+                params={"fields": "title,abstract,authors,publicationDate,externalIds,openAccessPdf,url"},
+                headers=headers,
+                timeout=30,
+            )
+        except Exception as exc:
+            logger.debug("S2 lookup failed for %s: %s", arxiv_id, exc)
+            return None
+
 
 class ArxivClient:
-    API_URL = "https://export.arxiv.org/api/query"
-    ATOM_NS = "{http://www.w3.org/2005/Atom}"
-    ARXIV_NS = "{http://arxiv.org/schemas/atom}"
+    """Fetch recent papers from arXiv list pages.
 
-    def __init__(self, *, http_get_text: Callable[..., str] | None = None):
-        self.http_get_text = http_get_text or text_get
-        self._last_request_at = 0.0
+    The recent CS list page exposes the newest papers in one lightweight HTML
+    response, for example: https://arxiv.org/list/cs/recent?skip=0&show=1000.
+    We parse arXiv IDs and titles from that page, then fetch each /abs/<id>
+    page directly from arXiv for abstract, authors, date, and category metadata.
+    """
 
-    def search_recent(self, categories: list[str], *, since: str, limit: int = 20) -> list[PaperMetadata]:
-        del since
-        query = " OR ".join(f"cat:{category}" for category in categories) or "cat:cs.AI"
-        params = {
-            "search_query": query,
-            "max_results": str(limit),
-            "sortBy": "submittedDate",
-            "sortOrder": "descending",
-        }
-        elapsed = time.time() - self._last_request_at
-        if elapsed < 3:
-            time.sleep(3 - elapsed)
-        self._last_request_at = time.time()
-        xml_text = self.http_get_text(f"{self.API_URL}?{urllib.parse.urlencode(params)}", timeout=120)
-        root = ET.fromstring(xml_text)
-        papers = []
-        for entry in root.findall(f"{self.ATOM_NS}entry"):
-            papers.append(self._entry_to_paper(entry))
+    def __init__(self, *, client: Any | None = None):
+        import requests as _requests
+
+        if client:
+            self._client = client
+        else:
+            session = _requests.Session()
+            session.headers["User-Agent"] = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            )
+            self._client = session
+
+    def search_recent(self, categories: list[str], *, since: str, limit: int = 200) -> list[PaperMetadata]:
+        """Fetch recent arXiv papers from /list/<archive>/recent HTML."""
+        since_date = since[:10] if since else "2020-01-01"
+        return self.search_recent_new_only(categories, since=since_date, limit=limit, paper_exists=None)
+
+    def search_recent_new_only(
+        self,
+        categories: list[str],
+        *,
+        since: str,
+        limit: int,
+        paper_exists: Callable[[str], bool] | None,
+        scan_limit: int | None = None,
+    ) -> list[PaperMetadata]:
+        since_date = since[:10] if since else "2020-01-01"
+        return self._fetch_via_list_page(
+            categories,
+            since_date,
+            limit,
+            paper_exists=paper_exists,
+            scan_limit=scan_limit,
+        )
+
+    def _fetch_via_list_page(
+        self,
+        categories: list[str],
+        since_date: str,
+        limit: int,
+        *,
+        paper_exists: Callable[[str], bool] | None = None,
+        scan_limit: int | None = None,
+    ) -> list[PaperMetadata]:
+        """Parse arXiv /list/<archive>/recent HTML, then fetch /abs pages."""
+        import re as _re
+        from html import unescape
+
+        archive = self._archive_from_categories(categories)
+        show = scan_limit or max(limit, 1000)
+        url = f"https://arxiv.org/list/{archive}/recent?skip=0&show={show}"
+
+        logger.info("arXiv list request: %s", url)
+        resp = self._client.get(url, timeout=30)
+        resp.raise_for_status()
+
+        papers: list[PaperMetadata] = []
+        seen_ids: set[str] = set()
+
+        # arXiv list pages are structured as <dt> links followed by <dd> metadata.
+        pairs = _re.findall(r"<dt>(.*?)</dt>\s*<dd>(.*?)</dd>", resp.text, _re.DOTALL | _re.IGNORECASE)
+        for dt_html, dd_html in pairs:
+            id_match = _re.search(r'href\s*=\s*["\']/abs/([^"\']+)["\']', dt_html)
+            if not id_match:
+                continue
+            arxiv_id = _normalize_arxiv_id(unescape(id_match.group(1)).strip())
+            if not arxiv_id or arxiv_id in seen_ids:
+                continue
+            if paper_exists and paper_exists(arxiv_id):
+                seen_ids.add(arxiv_id)
+                continue
+
+            title = self._extract_list_title(dd_html)
+            categories_found = _re.findall(r"\(([a-z-]+\.[A-Z]{2})\)", dd_html)
+            primary_category = categories_found[0] if categories_found else ""
+            seen_ids.add(arxiv_id)
+            papers.append(
+                PaperMetadata(
+                    arxiv_id=arxiv_id,
+                    title=title,
+                    categories=categories_found,
+                    primary_category=primary_category,
+                    pdf_url=f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+                    source="arxiv",
+                )
+            )
+
+        if not papers:
+            # Older/simple markup fallback: at least preserve IDs if title parsing fails.
+            for arxiv_id in _re.findall(r'href\s*=\s*["\']/abs/(\d+\.\d+(?:v\d+)?)["\']', resp.text):
+                normalized = _normalize_arxiv_id(arxiv_id)
+                if normalized and normalized not in seen_ids:
+                    if paper_exists and paper_exists(normalized):
+                        seen_ids.add(normalized)
+                        continue
+                    seen_ids.add(normalized)
+                    papers.append(
+                        PaperMetadata(
+                            arxiv_id=normalized,
+                            pdf_url=f"https://arxiv.org/pdf/{normalized}.pdf",
+                            source="arxiv",
+                        )
+                    )
+
+        list_papers = papers[:limit] if paper_exists is None else papers[: min(len(papers), limit)]
+        logger.info("arXiv list page returned %d papers for %s since %s", len(list_papers), archive, since_date)
+        return self._fetch_abs_metadata(list_papers, since_date)
+
+    def _fetch_abs_metadata(self, list_papers: list[PaperMetadata], since_date: str) -> list[PaperMetadata]:
+        papers: list[PaperMetadata] = []
+        for index, list_paper in enumerate(list_papers):
+            try:
+                resp = self._client.get(f"https://arxiv.org/abs/{list_paper.arxiv_id}", timeout=30)
+                resp.raise_for_status()
+                abs_paper = self._parse_abs_page(list_paper.arxiv_id, resp.text)
+            except Exception as exc:
+                logger.debug("arXiv abs page %s failed: %s", list_paper.arxiv_id, exc)
+                abs_paper = None
+
+            paper = self._merge_abs_with_list(abs_paper, list_paper)
+            if not paper.published_at or paper.published_at >= since_date:
+                papers.append(paper)
+            if (index + 1) % 50 == 0:
+                logger.info("arXiv abs pages fetched: %d/%d", index + 1, len(list_papers))
         return papers
 
-    def _entry_to_paper(self, entry: ET.Element) -> PaperMetadata:
-        title = _entry_text(entry, f"{self.ATOM_NS}title").replace("\n", " ").strip()
-        abstract = _entry_text(entry, f"{self.ATOM_NS}summary").replace("\n", " ").strip()
-        published = _entry_text(entry, f"{self.ATOM_NS}published")[:10]
-        updated = _entry_text(entry, f"{self.ATOM_NS}updated")[:10]
-        arxiv_id_raw = _entry_text(entry, f"{self.ARXIV_NS}id") or _entry_text(entry, f"{self.ATOM_NS}id")
-        arxiv_id = arxiv_id_raw.split("/abs/")[-1]
-        authors = []
-        for author_el in entry.findall(f"{self.ATOM_NS}author"):
-            name = _entry_text(author_el, f"{self.ATOM_NS}name")
-            if name:
-                authors.append(name)
-        categories = [cat.get("term", "") for cat in entry.findall(f"{self.ATOM_NS}category") if cat.get("term")]
+    @staticmethod
+    def _merge_abs_with_list(abs_paper: PaperMetadata | None, list_paper: PaperMetadata) -> PaperMetadata:
+        if abs_paper is None:
+            return list_paper
+        return PaperMetadata(
+            arxiv_id=list_paper.arxiv_id,
+            title=abs_paper.title or list_paper.title,
+            authors=abs_paper.authors,
+            abstract=abs_paper.abstract,
+            categories=abs_paper.categories or list_paper.categories,
+            primary_category=abs_paper.primary_category or list_paper.primary_category,
+            published_at=abs_paper.published_at,
+            updated_at=abs_paper.updated_at,
+            pdf_url=abs_paper.pdf_url or list_paper.pdf_url,
+            source="arxiv",
+        )
+
+    @staticmethod
+    def _archive_from_categories(categories: list[str]) -> str:
+        for category in categories:
+            if category:
+                return category.split(".", maxsplit=1)[0]
+        return "cs"
+
+    @staticmethod
+    def _extract_list_title(dd_html: str) -> str:
+        import re as _re
+        from html import unescape
+
+        match = _re.search(r'<div class=["\']list-title[^"\']*["\']>(.*?)</div>', dd_html, _re.DOTALL | _re.IGNORECASE)
+        if not match:
+            return ""
+        title_html = _re.sub(r'<span class=["\']descriptor["\']>\s*Title:\s*</span>', "", match.group(1), flags=_re.I)
+        title_text = _re.sub(r"<[^>]+>", " ", title_html)
+        return " ".join(unescape(title_text).split())
+
+    def _parse_abs_page(self, arxiv_id: str, html: str) -> PaperMetadata | None:
+        """Parse an arXiv /abs/<id> HTML page into PaperMetadata."""
+        import re as _re
+        from html import unescape
+
+        def _match(pattern: str) -> str:
+            m = _re.search(pattern, html)
+            return unescape(m.group(1)).strip() if m else ""
+
+        title = _match(r'<meta name="citation_title" content="(.*?)"')
+        abstract_raw = _match(
+            r'<blockquote class="abstract[^"]*">\s*<span class="descriptor">Abstract:</span>\s*(.*?)\s*</blockquote>',
+        )
+        abstract = abstract_raw.replace("<br>", " ").replace("\n", " ").strip()
+        published = _match(r'<meta name="citation_date" content="(.*?)"')
+        # Convert date format: "2026/06/03" -> "2026-06-03"
+        published = published.replace("/", "-")
+        authors_raw = _re.findall(r'<meta name="citation_author" content="(.*?)"', html)
+        categories_raw = _re.findall(r"subjects:\s*(.*?)</span>", html, _re.DOTALL)
+
+        categories: list[str] = []
+        if categories_raw:
+            categories = [c.strip() for c in categories_raw[0].split(";") if c.strip()]
+        primary_category = categories[0] if categories else ""
+
+        if not title:
+            return None
+
         return PaperMetadata(
             arxiv_id=arxiv_id,
             title=title,
-            authors=authors,
+            authors=authors_raw,
             abstract=abstract,
             categories=categories,
+            primary_category=primary_category,
             published_at=published,
-            updated_at=updated,
-            pdf_url=f"https://arxiv.org/pdf/{arxiv_id}.pdf" if arxiv_id else "",
+            updated_at=published,
+            pdf_url=f"https://arxiv.org/pdf/{arxiv_id}.pdf",
             source="arxiv",
         )
 
 
 class HybridRetriever:
+    """Retrieve recent papers directly from arXiv."""
+
     def __init__(
         self,
         *,
-        semantic_scholar_search: Callable[[list[str], int], list[PaperMetadata]],
+        s2_client: SemanticScholarClient,
         arxiv_search: Callable[[list[str], str, int], list[PaperMetadata]],
+        paper_exists: Callable[[str], bool] | None = None,
     ):
-        self.semantic_scholar_search = semantic_scholar_search
+        self.s2_client = s2_client
         self.arxiv_search = arxiv_search
+        self.paper_exists = paper_exists
 
     def search_recent(
         self,
@@ -166,21 +343,29 @@ class HybridRetriever:
         since: str,
         limit: int,
     ) -> list[PaperMetadata]:
-        merged: dict[str, PaperMetadata] = {}
-        for paper in self.semantic_scholar_search(queries, limit, since):
-            if paper.arxiv_id:
-                merged[_normalize_arxiv_id(paper.arxiv_id)] = paper
         try:
-            arxiv_papers = self.arxiv_search(categories, since, limit)
+            if self.paper_exists:
+                arxiv_papers = self.arxiv_search_new_only(categories, since=since, limit=limit)
+            else:
+                arxiv_papers = self.arxiv_search(categories, since, limit)
         except Exception as exc:
             logger.warning("ArXiv search failed: %s", exc)
-            arxiv_papers = []
-        for paper in arxiv_papers:
-            if paper.arxiv_id:
-                key = _normalize_arxiv_id(paper.arxiv_id)
-                existing = merged.get(key)
-                merged[key] = _merge_s2_with_arxiv(existing, paper) if existing else paper
-        return list(merged.values())[:limit]
+            return []
+
+        logger.info("arXiv returned %d papers", len(arxiv_papers))
+        return arxiv_papers[:limit]
+
+    def arxiv_search_new_only(self, categories: list[str], *, since: str, limit: int) -> list[PaperMetadata]:
+        if not self.paper_exists:
+            return self.arxiv_search(categories, since, limit)
+        # The default ArxivClient exposes a new-only path that filters by DB
+        # before fetching expensive /abs pages. Test fakes may only implement
+        # the older callable shape, so keep a safe fallback.
+        owner = getattr(self.arxiv_search, "__self__", None)
+        if owner and hasattr(owner, "search_recent_new_only"):
+            return owner.search_recent_new_only(categories, since=since, limit=limit, paper_exists=self.paper_exists)
+        papers = self.arxiv_search(categories, since, limit)
+        return [paper for paper in papers if not self.paper_exists(_normalize_arxiv_id(paper.arxiv_id))]
 
 
 class PdfDownloader:
@@ -207,20 +392,19 @@ class PdfDownloader:
         return dest
 
 
-def make_default_retriever(api_keys: list[str], fields: list[str]) -> HybridRetriever:
+def make_default_retriever(
+    api_keys: list[str],
+    fields: list[str],
+    *,
+    paper_exists: Callable[[str], bool] | None = None,
+) -> HybridRetriever:
     s2_client = SemanticScholarClient(api_keys=api_keys, fields=fields)
     arxiv_client = ArxivClient()
 
-    def s2_search(queries: list[str], limit: int, since: str | None = None) -> list[PaperMetadata]:
-        papers: list[PaperMetadata] = []
-        per_query_limit = max(1, limit)
-        for query in queries:
-            papers.extend(s2_client.search(query, limit=per_query_limit, since=since))
-        return papers
-
     return HybridRetriever(
-        semantic_scholar_search=s2_search,
-        arxiv_search=lambda categories, since, limit: arxiv_client.search_recent(categories, since=since, limit=limit),
+        s2_client=s2_client,
+        arxiv_search=arxiv_client.search_recent,
+        paper_exists=paper_exists,
     )
 
 
@@ -272,8 +456,3 @@ def _download_with_paperscraper(arxiv_id: str, dest: Path) -> bool:
             return False
     except Exception:
         return False
-
-
-def _entry_text(entry: ET.Element, path: str) -> str:
-    element = entry.find(path)
-    return (element.text or "").strip() if element is not None else ""

@@ -3,7 +3,27 @@ import unittest
 from pathlib import Path
 
 from paper_radar._http import ssl_context
-from paper_radar.retrieval import HybridRetriever, PaperMetadata, PdfDownloader, SemanticScholarClient
+from paper_radar.retrieval import ArxivClient, HybridRetriever, PaperMetadata, PdfDownloader, SemanticScholarClient
+
+
+class FakeResponse:
+    def __init__(self, text: str):
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeSession:
+    def __init__(self, html: str | dict[str, str]):
+        self.html = html
+        self.urls = []
+
+    def get(self, url: str, *, timeout: int):
+        self.urls.append((url, timeout))
+        if isinstance(self.html, dict):
+            return FakeResponse(self.html[url])
+        return FakeResponse(self.html)
 
 
 class RetrievalTests(unittest.TestCase):
@@ -69,51 +89,191 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(captured["params"]["sort"], "publicationDate:desc")
         self.assertEqual(captured["params"]["publicationDateOrYear"], "2026-05-27:")
 
-    def test_hybrid_retriever_merges_by_arxiv_id_and_prefers_arxiv_dates(self):
-        s2_paper = PaperMetadata(
-            arxiv_id="2605.12345",
-            semantic_scholar_id="s2-1",
-            title="S2 Title",
-            abstract="S2 abstract",
-            published_at="2026-05-28",
-            pdf_url="https://pdf.example/s2.pdf",
-            semantic_scholar_tldr="short",
-            source="semantic_scholar",
+    def test_arxiv_client_uses_recent_cs_list_then_abs_pages(self):
+        list_html = """
+        <dl>
+          <dt><span class="list-identifier"><a href="/abs/2606.00001v2">arXiv:2606.00001v2</a></span></dt>
+          <dd>
+            <div class="list-title mathjax"><span class="descriptor">Title:</span>
+              Headless &amp; Simple Crawl
+            </div>
+            <div class="list-subjects"><span class="descriptor">Subjects:</span>
+              Artificial Intelligence (cs.AI); Computation and Language (cs.CL)
+            </div>
+          </dd>
+          <dt><span class="list-identifier"><a href="/abs/2606.00002">arXiv:2606.00002</a></span></dt>
+          <dd><div class="list-title mathjax"><span class="descriptor">Title:</span>Another Paper</div></dd>
+        </dl>
+        """
+        abs_html_1 = """
+        <meta name="citation_title" content="Full arXiv Abs Title">
+        <meta name="citation_date" content="2026/06/04">
+        <meta name="citation_author" content="Ada Lovelace">
+        <meta name="citation_author" content="Alan Turing">
+        <blockquote class="abstract mathjax">
+          <span class="descriptor">Abstract:</span>
+          Full abstract from arXiv abs page.
+        </blockquote>
+        <td class="tablecell subjects">
+          <span class="primary-subject">Artificial Intelligence</span> subjects: cs.AI; cs.CL
+        </td>
+        """
+        abs_html_2 = """
+        <meta name="citation_title" content="Second Abs Title">
+        <meta name="citation_date" content="2026/06/03">
+        <blockquote class="abstract mathjax"><span class="descriptor">Abstract:</span>Second abstract.</blockquote>
+        """
+        session = FakeSession(
+            {
+                "https://arxiv.org/list/cs/recent?skip=0&show=1000": list_html,
+                "https://arxiv.org/abs/2606.00001": abs_html_1,
+                "https://arxiv.org/abs/2606.00002": abs_html_2,
+            }
         )
+
+        results = ArxivClient(client=session).search_recent(["cs.AI", "cs.CL"], since="2026-06-01", limit=1000)
+
+        self.assertEqual(
+            session.urls,
+            [
+                ("https://arxiv.org/list/cs/recent?skip=0&show=1000", 30),
+                ("https://arxiv.org/abs/2606.00001", 30),
+                ("https://arxiv.org/abs/2606.00002", 30),
+            ],
+        )
+        self.assertEqual([p.arxiv_id for p in results], ["2606.00001", "2606.00002"])
+        self.assertEqual(results[0].title, "Full arXiv Abs Title")
+        self.assertEqual(results[0].authors, ["Ada Lovelace", "Alan Turing"])
+        self.assertEqual(results[0].abstract, "Full abstract from arXiv abs page.")
+        self.assertEqual(results[0].published_at, "2026-06-04")
+        self.assertEqual(results[0].pdf_url, "https://arxiv.org/pdf/2606.00001.pdf")
+        self.assertEqual(results[0].source, "arxiv")
+
+    def test_arxiv_client_keeps_list_metadata_when_abs_page_fails(self):
+        class FailingAbsSession(FakeSession):
+            def get(self, url: str, *, timeout: int):
+                self.urls.append((url, timeout))
+                if "/abs/" in url:
+                    raise RuntimeError("abs failed")
+                return FakeResponse(self.html)
+
+        session = FailingAbsSession(
+            '<dt><a href ="/abs/2606.00001">arXiv:2606.00001</a></dt>'
+            '<dd><div class="list-title"><span class="descriptor">Title:</span>List Title</div></dd>'
+        )
+
+        results = ArxivClient(client=session).search_recent(["cs.AI"], since="2026-06-01", limit=1)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].arxiv_id, "2606.00001")
+        self.assertEqual(results[0].title, "List Title")
+        self.assertEqual(results[0].abstract, "")
+
+    def test_arxiv_client_skips_existing_db_papers_before_abs_fetch(self):
+        list_html = """
+        <dt><a href ="/abs/2606.00001">arXiv:2606.00001</a></dt>
+        <dd><div class="list-title"><span class="descriptor">Title:</span>Existing</div></dd>
+        <dt><a href ="/abs/2606.00002">arXiv:2606.00002</a></dt>
+        <dd><div class="list-title"><span class="descriptor">Title:</span>New</div></dd>
+        """
+        abs_html = """
+        <meta name="citation_title" content="New Abs Title">
+        <meta name="citation_date" content="2026/06/04">
+        <blockquote class="abstract mathjax"><span class="descriptor">Abstract:</span>New abstract.</blockquote>
+        """
+        session = FakeSession(
+            {
+                "https://arxiv.org/list/cs/recent?skip=0&show=1000": list_html,
+                "https://arxiv.org/abs/2606.00002": abs_html,
+            }
+        )
+
+        results = ArxivClient(client=session).search_recent_new_only(
+            ["cs.AI"],
+            since="2026-06-01",
+            limit=10,
+            paper_exists=lambda arxiv_id: arxiv_id == "2606.00001",
+        )
+
+        self.assertEqual([p.arxiv_id for p in results], ["2606.00002"])
+        self.assertEqual(
+            session.urls,
+            [
+                ("https://arxiv.org/list/cs/recent?skip=0&show=1000", 30),
+                ("https://arxiv.org/abs/2606.00002", 30),
+            ],
+        )
+
+    def test_arxiv_client_derives_non_cs_archive_from_category_prefix(self):
+        session = FakeSession('<dt><a href="/abs/2606.00003">arXiv:2606.00003</a></dt><dd></dd>')
+
+        ArxivClient(client=session).search_recent(["math.CO"], since="2026-06-01", limit=10)
+
+        self.assertEqual(session.urls[0][0], "https://arxiv.org/list/math/recent?skip=0&show=1000")
+
+    def test_hybrid_retriever_returns_arxiv_direct_results_without_s2_lookup(self):
         arxiv_paper = PaperMetadata(
             arxiv_id="2605.12345",
             title="arXiv Title",
-            abstract="arxiv abstract",
             categories=["cs.AI"],
-            published_at="2026-05-29",
-            updated_at="2026-05-29",
+            abstract="arXiv abstract",
             pdf_url="https://arxiv.org/pdf/2605.12345.pdf",
             source="arxiv",
         )
 
+        def fake_get(url, *, params, headers, timeout):
+            raise AssertionError("Semantic Scholar should not be called for recent arXiv-direct retrieval")
+
+        fake_s2 = SemanticScholarClient(api_keys=["k1"], http_get=fake_get)
+
         retriever = HybridRetriever(
-            semantic_scholar_search=lambda queries, limit, since=None: [s2_paper],
+            s2_client=fake_s2,
             arxiv_search=lambda categories, since, limit: [arxiv_paper],
         )
-        merged = retriever.search_recent(["LLM agent"], ["cs.AI"], since="2026-05-28", limit=20)
+        results = retriever.search_recent(["LLM agent"], ["cs.AI"], since="2026-05-28", limit=20)
 
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(merged[0].title, "arXiv Title")
-        self.assertEqual(merged[0].semantic_scholar_id, "s2-1")
-        self.assertEqual(merged[0].semantic_scholar_tldr, "short")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "arXiv Title")
+        self.assertEqual(results[0].abstract, "arXiv abstract")
+        self.assertEqual(results[0].pdf_url, "https://arxiv.org/pdf/2605.12345.pdf")
+        self.assertEqual(results[0].source, "arxiv")
 
-    def test_hybrid_retriever_returns_semantic_scholar_results_when_arxiv_is_rate_limited(self):
-        s2_paper = PaperMetadata(arxiv_id="2605.12345", title="S2 Paper", source="semantic_scholar")
+    def test_hybrid_retriever_uses_arxiv_new_only_path_when_db_filter_available(self):
+        class FakeArxivClient:
+            def __init__(self):
+                self.calls = []
+
+            def search_recent(self, categories, *, since, limit):
+                raise AssertionError("plain search should not run when paper_exists is available")
+
+            def search_recent_new_only(self, categories, *, since, limit, paper_exists):
+                self.calls.append((categories, since, limit, paper_exists("2606.00001")))
+                return [PaperMetadata(arxiv_id="2606.00002", title="New", source="arxiv")]
+
+        fake_arxiv = FakeArxivClient()
+        retriever = HybridRetriever(
+            s2_client=SemanticScholarClient(api_keys=[], http_get=lambda *a, **kw: {}),
+            arxiv_search=fake_arxiv.search_recent,
+            paper_exists=lambda arxiv_id: arxiv_id == "2606.00001",
+        )
+
+        results = retriever.search_recent([], ["cs.AI"], since="2026-06-01", limit=10)
+
+        self.assertEqual([p.arxiv_id for p in results], ["2606.00002"])
+        self.assertEqual(fake_arxiv.calls, [(["cs.AI"], "2026-06-01", 10, True)])
+
+    def test_hybrid_retriever_returns_empty_when_arxiv_is_rate_limited(self):
+        """When arXiv fails, no papers returned."""
+        fake_s2 = SemanticScholarClient(api_keys=["k1"], http_get=lambda *a, **kw: {})
 
         retriever = HybridRetriever(
-            semantic_scholar_search=lambda queries, limit, since=None: [s2_paper],
+            s2_client=fake_s2,
             arxiv_search=lambda categories, since, limit: (_ for _ in ()).throw(RuntimeError("429")),
         )
 
         merged = retriever.search_recent(["LLM agent"], ["cs.AI"], since="2026-05-27", limit=20)
 
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(merged[0].title, "S2 Paper")
+        self.assertEqual(len(merged), 0)
 
     def test_pdf_downloader_uses_existing_pdf_url_then_arxiv_fallback(self):
         downloaded = []

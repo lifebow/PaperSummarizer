@@ -150,7 +150,10 @@ class PaperRadarDb:
             "semantic_scholar_url": paper.get("semantic_scholar_url", ""),
             "source": paper.get("source", ""),
             "primary_category": paper.get("primary_category", ""),
-            "archive_status": paper.get("archive_status", "metadata_only"),
+            "archive_status": paper.get(
+                "archive_status",
+                existing.get("archive_status", "metadata_only") if existing else "metadata_only",
+            ),
             "author_affiliations_json": json.dumps(paper.get("author_affiliations", []), ensure_ascii=False),
             "author_s2_ids_json": json.dumps(paper.get("author_s2_ids", []), ensure_ascii=False),
         }
@@ -200,6 +203,34 @@ class PaperRadarDb:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM papers WHERE arxiv_id=?", (arxiv_id,)).fetchone()
         return dict(row) if row else None
+
+    def queued_papers(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM papers
+                WHERE archive_status = 'queued'
+                ORDER BY published_at DESC, first_seen_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["authors"] = json.loads(item.get("authors_json") or "[]")
+            item["categories"] = json.loads(item.get("categories_json") or "[]")
+            item["author_affiliations"] = json.loads(item.get("author_affiliations_json") or "[]")
+            item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
+            results.append(item)
+        return results
+
+    def update_paper_archive_status(self, arxiv_id: str, status: str, error: str = "") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE papers SET archive_status=?, last_status=?, last_error=? WHERE arxiv_id=?",
+                (status, status, error, arxiv_id),
+            )
 
     def start_run(self) -> int:
         with self._connect() as conn:

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from paper_radar.config import AppConfig, FilterConfig, PathConfig, TelegramConfig, TopicConfig
+from paper_radar.config import AppConfig, FilterConfig, PathConfig, PipelineConfig, TelegramConfig, TopicConfig
 from paper_radar.daemon import PaperRadarService
 from paper_radar.db import PaperRadarDb
 from paper_radar.extraction import ExtractedText
@@ -103,6 +103,79 @@ class TelegramDaemonTests(unittest.TestCase):
         self.assertEqual(result["accepted_count"], 1)
         self.assertIn("Agent Safety", digest)
         self.assertFalse(downloaded_pdf.exists())
+
+    def test_run_once_drains_multiple_queue_batches_in_same_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "data" / "radar.sqlite3")
+            config = AppConfig(
+                topics=TopicConfig(categories=["cs.AI"], queries=["LLM agent"]),
+                filters=FilterConfig(max_papers_per_batch=1),
+                pipeline=PipelineConfig(max_papers_per_run=1),
+                paths=PathConfig(
+                    database=root / "data" / "radar.sqlite3",
+                    tmp_pdfs=root / "data" / "tmp_pdfs",
+                    digests=root / "digests",
+                ),
+            )
+            papers = [
+                PaperMetadata(
+                    arxiv_id="2605.00001",
+                    title="Paper 1",
+                    abstract="abstract",
+                    published_at="2026-05-01",
+                    pdf_url="pdf1",
+                ),
+                PaperMetadata(
+                    arxiv_id="2605.00002",
+                    title="Paper 2",
+                    abstract="abstract",
+                    published_at="2026-05-02",
+                    pdf_url="pdf2",
+                ),
+            ]
+
+            class FakeRetriever:
+                def search_recent(self, queries, categories, *, since, limit):
+                    return papers
+
+            class FakeDownloader:
+                def __init__(self):
+                    self.downloaded = []
+
+                def download(self, paper, tmp_dir):
+                    self.downloaded.append(paper.arxiv_id)
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+                    path = tmp_dir / f"{paper.arxiv_id}.pdf"
+                    path.write_bytes(b"%PDF")
+                    return path
+
+            class FakeExtractor:
+                def extract(self, path):
+                    return ExtractedText(text="full text " * 50, extractor_name="primary")
+
+            downloader = FakeDownloader()
+            fake_telegram = type(
+                "FakeTelegram",
+                (),
+                {"send_message": lambda self, msg, **kwargs: None},
+            )()
+            service = PaperRadarService(
+                config=config,
+                db=db,
+                retriever=FakeRetriever(),
+                downloader=downloader,
+                extractor=FakeExtractor(),
+                llm=None,
+                telegram=fake_telegram,
+            )
+
+            result = service.run_once(now_date="2026-05-29", now_time="15:00")
+
+            self.assertEqual(result["found_count"], 2)
+            self.assertEqual(result["accepted_count"], 2)
+            self.assertEqual(downloader.downloaded, ["2605.00002", "2605.00001"])
+            self.assertEqual(db.queued_papers(limit=10), [])
 
     def test_send_daily_recap_marks_sent(self):
         sent_messages = []

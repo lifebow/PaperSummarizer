@@ -81,6 +81,51 @@ class DbTests(unittest.TestCase, TempDbMixin):
         self.assertTrue(db.was_recap_sent("2026-05-29"))
         self.cleanup_db()
 
+    def test_queued_papers_and_archive_status_updates(self):
+        db = self.make_db()
+        db.upsert_paper(
+            {
+                "arxiv_id": "2501.00001",
+                "title": "Queued Old",
+                "published_at": "2025-01-01",
+                "archive_status": "queued",
+            }
+        )
+        db.upsert_paper(
+            {
+                "arxiv_id": "2501.00002",
+                "title": "Queued New",
+                "authors": ["A"],
+                "categories": ["cs.AI"],
+                "published_at": "2025-02-01",
+                "archive_status": "queued",
+            }
+        )
+        db.upsert_paper({"arxiv_id": "2501.00003", "title": "Accepted", "archive_status": "accepted"})
+
+        queued = db.queued_papers(limit=10)
+
+        self.assertEqual([p["arxiv_id"] for p in queued], ["2501.00002", "2501.00001"])
+        self.assertEqual(queued[0]["authors"], ["A"])
+        self.assertEqual(queued[0]["categories"], ["cs.AI"])
+
+        db.update_paper_archive_status("2501.00002", "processing")
+
+        self.assertEqual([p["arxiv_id"] for p in db.queued_papers(limit=10)], ["2501.00001"])
+        self.assertEqual(db.get_paper_by_arxiv_id("2501.00002")["archive_status"], "processing")
+        self.cleanup_db()
+
+    def test_upsert_preserves_existing_archive_status_when_unspecified(self):
+        db = self.make_db()
+        db.upsert_paper({"arxiv_id": "2501.00001", "title": "Queued", "archive_status": "queued"})
+
+        db.upsert_paper({"arxiv_id": "2501.00001", "title": "Updated"})
+
+        paper = db.get_paper_by_arxiv_id("2501.00001")
+        self.assertEqual(paper["title"], "Updated")
+        self.assertEqual(paper["archive_status"], "queued")
+        self.cleanup_db()
+
 
 if __name__ == "__main__":
     unittest.main()
