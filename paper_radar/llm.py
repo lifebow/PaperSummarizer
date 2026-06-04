@@ -75,8 +75,8 @@ def build_relevance_prompt(title: str, abstract: str, topics: list[str]) -> tupl
     return system, user
 
 
-_MAX_TEXT_CHARS = 15000
-_EXPAND_MAX_TEXT_CHARS = 30000
+_MAX_TEXT_CHARS = 10000
+_EXPAND_MAX_TEXT_CHARS = 15000
 
 
 def build_summary_prompt(title: str, abstract: str, full_text_markdown: str) -> tuple[str, str]:

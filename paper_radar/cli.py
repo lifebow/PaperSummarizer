@@ -48,8 +48,13 @@ def main() -> None:
     enrich.add_argument("--limit", type=int, default=50, help="Max papers to process")
     enrich.add_argument("--dry-run", action="store_true", help="Show what would be processed")
 
-    serve_bot = subparsers.add_parser("serve-bot", help="Start webhook bot server for expand requests")
+    serve_bot = subparsers.add_parser("serve-bot", help="Start bot server for expand requests")
     serve_bot.add_argument("--port", type=int, help="Override webhook port")
+    serve_bot.add_argument(
+        "--poll",
+        action="store_true",
+        help="Use long-polling instead of webhook (no public URL needed)",
+    )
 
     expand_paper = subparsers.add_parser("expand-paper", help="Expand a paper analysis and send to Telegram")
     expand_paper.add_argument("arxiv_id", help="arXiv ID to expand")
@@ -192,7 +197,10 @@ def _handle_serve_bot(args: argparse.Namespace) -> None:
 
         config = replace(config, bot=replace(config.bot, webhook_port=args.port))
     server = BotServer(config=config, db=db, llm=llm_client, telegram=telegram)
-    server.start()
+    if args.poll:
+        server.start_polling()
+    else:
+        server.start()
 
 
 def _handle_expand_paper(args: argparse.Namespace) -> None:

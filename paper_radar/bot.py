@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
@@ -14,6 +15,12 @@ from .llm import LlmClient, build_expand_prompt
 from .telegram import TelegramSender
 
 logger = logging.getLogger(__name__)
+
+# -------------------------------------------------------------------
+# Shared helpers
+# -------------------------------------------------------------------
+
+LONG_POLL_TIMEOUT = 60  # seconds for getUpdates long-polling
 
 
 class ExpandPipeline:
@@ -111,13 +118,13 @@ class ExpandPipeline:
             affiliations = paper.get("author_affiliations") or []
             if affiliations:
                 unique_affs = list(dict.fromkeys(affiliations))
-                aff_text = f"\n👥 *Affiliations:* {', '.join(unique_affs[:5])}\n"
-                # Insert after the header
+                aff_text = f"\nAffiliations: {', '.join(unique_affs[:5])}\n"
                 lines = text.split("\n")
-                insert_pos = 2  # After title + arxiv_id link
-                lines.insert(insert_pos, aff_text)
+                lines.insert(2, aff_text)
                 text = "\n".join(lines)
-        self.telegram.send_long_message(text, chat_id=chat_id)
+        # Strip Markdown — LLM-generated content may break Telegram Markdown.
+        # Send as plain text (no parse_mode) for reliability.
+        self.telegram.send_long_message(text, chat_id=chat_id, parse_mode=None)
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
@@ -175,6 +182,47 @@ class BotServer:
         except KeyboardInterrupt:
             logger.info("Bot server shutting down")
             server.shutdown()
+
+    def start_polling(self) -> None:
+        """Start long-polling loop — no public URL needed."""
+        import requests as _requests
+
+        # Delete any existing webhook so getUpdates works
+        self.telegram.delete_webhook()
+        logger.info("Webhook deleted, starting polling mode")
+
+        base = f"https://api.telegram.org/bot{self.telegram.bot_token}"
+        offset = 0
+
+        logger.info("Polling for updates (Ctrl+C to stop)...")
+        try:
+            while True:
+                try:
+                    resp = _requests.post(
+                        f"{base}/getUpdates",
+                        json={
+                            "offset": offset,
+                            "timeout": LONG_POLL_TIMEOUT,
+                            "allowed_updates": ["callback_query", "message"],
+                        },
+                        timeout=LONG_POLL_TIMEOUT + 10,
+                    )
+                    body = resp.json()
+                except Exception as exc:
+                    logger.warning("getUpdates error: %s — retrying in 5s", exc)
+                    time.sleep(5)
+                    continue
+
+                updates = body.get("result", [])
+                for update in updates:
+                    offset = max(offset, update.get("update_id", 0) + 1)
+                    try:
+                        self.handle_update(update)
+                    except Exception as exc:
+                        logger.exception("Error handling update %s: %s", update.get("update_id"), exc)
+
+        except KeyboardInterrupt:
+            logger.info("Polling stopped")
 
     def handle_update(self, update: dict[str, Any]) -> None:
         """Process an incoming Telegram update."""

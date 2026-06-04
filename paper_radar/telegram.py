@@ -34,6 +34,7 @@ class TelegramSender:
         *,
         reply_markup: dict[str, Any] | None = None,
         chat_id: str | None = None,
+        parse_mode: str = "Markdown",
     ) -> dict[str, Any]:
         """Send a message. Optionally include inline keyboard reply_markup."""
         if not text.strip():
@@ -42,9 +43,10 @@ class TelegramSender:
         payload: dict[str, Any] = {
             "chat_id": target_chat,
             "text": text,
-            "parse_mode": "Markdown",
             "disable_web_page_preview": True,
         }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = json.dumps(reply_markup)
         response = self.http_post(
@@ -62,6 +64,7 @@ class TelegramSender:
         *,
         chat_id: str | None = None,
         reply_markup: dict[str, Any] | None = None,
+        parse_mode: str = "Markdown",
     ) -> list[dict[str, Any]]:
         """Send text that may exceed Telegram's 4096 char limit, splitting into multiple messages."""
         if not text.strip():
@@ -70,7 +73,7 @@ class TelegramSender:
         results = []
         for i, chunk in enumerate(chunks):
             markup = reply_markup if i == len(chunks) - 1 else None
-            result = self.send_message(chunk, reply_markup=markup, chat_id=chat_id)
+            result = self.send_message(chunk, reply_markup=markup, chat_id=chat_id, parse_mode=parse_mode)
             results.append(result)
         return results
 
