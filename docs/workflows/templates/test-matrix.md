@@ -54,7 +54,7 @@ behavior with confidence.
 - Full regression command:
 
 ```bash
-python3 -m unittest discover -v
+scripts/harness.sh
 ```
 
 ## Refactor safety
@@ -68,7 +68,6 @@ python3 -m unittest discover -v
 ## Lint and verification order
 
 ```bash
-python3 -m ruff check .
-python3 -m ruff format --check .
-python3 -m unittest discover -v
+scripts/harness.sh
+scripts/harness.sh --pre-push
 ```

@@ -5,11 +5,9 @@
 
 ## Graph
 
-Harness hardening note: the approved design
-`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will add
-`scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate. Until
-that implementation exists, keep the explicit command graph below. After it
-exists, prefer the canonical harness command in generated task graphs.
+Use the canonical harness command for mechanical verification. It runs lint,
+format-check, and full unittest regression in the required order. Use pre-push
+mode to include the refactor cadence gate.
 
 ```yaml
 feature: FEATURE_TITLE
@@ -39,34 +37,26 @@ stages:
     depends_on:
       - debate
 
-  - id: lint
+  - id: verify
     runner: subagent
     model: fast
-    command: python3 -m ruff check .
+    command: scripts/harness.sh
     depends_on:
       - implement
 
-  - id: format-check
+  - id: pre-push-check
     runner: subagent
     model: fast
-    command: python3 -m ruff format --check .
+    command: scripts/harness.sh --pre-push
     depends_on:
-      - implement
-
-  - id: regression-test
-    runner: subagent
-    model: fast
-    command: python3 -m unittest discover -v
-    depends_on:
-      - lint
-      - format-check
+      - verify
 
   - id: docker-smoke
     runner: subagent
     model: fast
-    command: docker compose run --rm paper-radar --help
+    command: podman compose run --rm paper-radar --help
     depends_on:
-      - regression-test
+      - pre-push-check
 ```
 
 ## Result Contract

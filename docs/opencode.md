@@ -121,30 +121,24 @@ stages:
     runner: subagent
     model: fast-or-standard
 
-  - id: lint
+  - id: verify
     runner: subagent
     model: fast
-    command: python3 -m ruff check .
+    command: scripts/harness.sh
 
-  - id: format-check
+  - id: pre-push-check
     runner: subagent
     model: fast
-    command: python3 -m ruff format --check .
-
-  - id: regression-test
-    runner: subagent
-    model: fast
-    command: python3 -m unittest discover -v
+    command: scripts/harness.sh --pre-push
     depends_on:
-      - lint
-      - format-check
+      - verify
 
   - id: docker-smoke
     runner: subagent
     model: fast
-    command: docker compose run --rm paper-radar --help
+    command: podman compose run --rm paper-radar --help
     depends_on:
-      - regression-test
+      - pre-push-check
 ```
 
 Subagents must report:
@@ -180,39 +174,51 @@ OpenCode stores runtime state outside this repository, including
 lock files, record it as an environment blocker and re-run with approved access
 before judging the harness.
 
+## Machine-Enforced Harness
+
+Use the canonical harness for local verification:
+
+```bash
+scripts/harness.sh
+```
+
+or:
+
+```bash
+make verify
+```
+
+The script runs lint, format-check, and full unittest regression in the required
+order. If lint or format-check fails, stop and do not treat tests as verified.
+
+Before pushing or handing off feature work, run the pre-push simulation:
+
+```bash
+scripts/harness.sh --pre-push
+```
+
+Pre-push mode runs the same verification and blocks when at least 5 `feat:`
+commits exist after the latest reachable `refactor:` commit. The versioned Git
+hook in `.githooks/pre-push` calls this mode. Install it in a new clone or tab
+workspace with:
+
+```bash
+scripts/install-hooks.sh
+```
+
+The machine-enforced harness design lives at
+`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md`.
+
 ## Lint Before Test Gate
 
-Lint and format-check must run before full tests:
+The canonical harness enforces lint and format-check before full tests. The raw
+commands inside `scripts/harness.sh` are:
 
 ```bash
 python3 -m ruff check .
 python3 -m ruff format --check .
 python3 -m unittest discover -v
 ```
-
-If lint fails, stop. Do not run tests until lint issues are fixed and
-format-check passes.
-
-## Pending Machine-Enforced Harness
-
-The approved design at
-`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will make
-the verification gates executable instead of memory-based.
-
-Planned changes:
-
-- add `scripts/harness.sh` as the canonical lint, format-check, and unittest
-  entrypoint,
-- add `make verify` as a short alias for the canonical script,
-- add a versioned `.githooks/pre-push` hook,
-- add `scripts/install-hooks.sh` to set `core.hooksPath=.githooks`,
-- make pre-push block when at least 5 `feat:` commits exist after the latest
-  reachable `refactor:` commit.
-
-Until that design is implemented, use the raw commands in this document. After
-implementation, generated plans should prefer `scripts/harness.sh` or
-`make verify` for local verification and `scripts/harness.sh --pre-push` for
-pre-push simulation.
 
 ## Regression Gate
 
@@ -319,7 +325,7 @@ Before handing this project to OpenCode, confirm:
 - `docs/opencode.md` exists,
 - `docs/workflows/README.md` exists,
 - workflow templates exist under `docs/workflows/templates/`,
-- `python3 -m ruff check .` passes,
-- `python3 -m ruff format --check .` passes,
-- `python3 -m unittest discover -v` passes,
+- `scripts/harness.sh` passes,
+- `scripts/harness.sh --pre-push` passes,
+- `git config --get core.hooksPath` returns `.githooks`,
 - user has selected debate models and final judge model for any debate run.

@@ -28,12 +28,16 @@ Do not commit real API keys.
 ## Common Commands
 
 ```bash
-python3 -m unittest discover -v
-python3 -m ruff check .
-python3 -m ruff format --check .
+make verify
+scripts/harness.sh --pre-push
+scripts/install-hooks.sh
 paper-radar --run-once
 paper-radar --send-recap 2026-05-29
 ```
+
+`make verify` runs Ruff lint, Ruff format-check, and the full `unittest`
+regression suite in the required order. `scripts/harness.sh --pre-push` also
+checks the refactor cadence gate before pushing.
 
 ## Container Smoke
 

@@ -13,19 +13,16 @@ runner that can execute a task graph.
 - `templates/test-matrix.md`: comprehensive feature test matrix.
 - `templates/task-graph.md`: autonomous subagent task graph skeleton.
 
-## Pending Harness Hardening
+## Machine-Enforced Harness
 
-The approved design
-`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will move
-core verification from repeated Markdown commands into a canonical
-`scripts/harness.sh`, a `make verify` alias, and a versioned pre-push hook.
+Core verification lives in the canonical `scripts/harness.sh` command, with
+`make verify` as the short alias and `.githooks/pre-push` as the versioned Git
+hook.
 
-Until that implementation exists, generated workflows must keep using the raw
-lint, format-check, unittest, and deploy-smoke commands below. After
-implementation, new workflows should use `scripts/harness.sh` or `make verify`
-for local verification and `scripts/harness.sh --pre-push` for pre-push
-simulation. The planned pre-push hook blocks when 5 or more `feat:` commits have
-landed since the latest reachable `refactor:` commit.
+Generated workflows should use `scripts/harness.sh` or `make verify` for local
+verification and `scripts/harness.sh --pre-push` for pre-push simulation. The
+pre-push mode blocks when 5 or more `feat:` commits have landed since the
+latest reachable `refactor:` commit.
 
 ## Required Order
 
@@ -37,13 +34,13 @@ debate when needed
   -> generate feature plan
   -> write comprehensive test matrix
   -> implement through subagents
-  -> lint through subagent
-  -> format-check through subagent
-  -> full regression tests through subagent
+  -> run scripts/harness.sh through verification subagent
+  -> run scripts/harness.sh --pre-push through verification subagent
   -> Docker smoke through subagent when deploy files exist
 ```
 
-Lint must run before tests. Full regression tests must run before Docker smoke.
+The canonical harness enforces lint-before-test. Full regression tests must run
+before Docker smoke.
 
 ## User Inputs
 
@@ -60,15 +57,16 @@ The user must provide:
 
 - Coordinator: orchestrates, reviews, and asks user questions.
 - Worker subagent: edits assigned files and writes tests.
-- Verification subagent: runs lint, format-check, tests, or Docker smoke.
+- Verification subagent: runs `scripts/harness.sh`,
+  `scripts/harness.sh --pre-push`, or Docker smoke.
 - Debate panel: user-selected large models in OpenCode.
 - Final judge: user-selected model that writes the decision memo.
 
 ## Current Project Caveats
 
 - This workspace now has a `.git` repository for refactor checkpoints.
-- Machine-enforced harness hardening is designed but not implemented yet; see
-  `docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md`.
+- Machine-enforced harness hardening is implemented; install local hooks with
+  `scripts/install-hooks.sh` in new clone or tab workspaces.
 - Dockerfiles exist. Podman smoke and Podman Compose smoke work locally.
 - Docker Compose CLI specifically is not installed in this shell; use
   `podman compose` here or re-check `docker compose` in another OpenCode shell.

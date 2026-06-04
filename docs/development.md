@@ -2,7 +2,19 @@
 
 ## Harness
 
-Use the lightweight harness before and after refactors:
+Use the machine-enforced harness before and after refactors:
+
+```bash
+make verify
+```
+
+The canonical script is:
+
+```bash
+scripts/harness.sh
+```
+
+It runs, in order:
 
 ```bash
 python3 -m ruff check .
@@ -10,17 +22,23 @@ python3 -m ruff format --check .
 python3 -m unittest discover -v
 ```
 
-Use Ruff to apply formatting:
+Use the pre-push simulation before handing off feature work:
 
 ```bash
-python3 -m ruff format .
+scripts/harness.sh --pre-push
 ```
 
-Use Ruff to apply safe lint fixes:
+Install the versioned Git hook path in a new clone or tab workspace:
 
 ```bash
-python3 -m ruff check . --fix
+scripts/install-hooks.sh
+git config --get core.hooksPath
 ```
+
+Expected hook path: `.githooks`.
+
+Use Ruff to apply formatting with `python3 -m ruff format .`.
+Use Ruff to apply safe lint fixes with `python3 -m ruff check . --fix`.
 
 ## Testing Pattern
 
@@ -73,7 +91,7 @@ of concluding that `opencode.json` is invalid.
 ## Refactor Rules
 
 - Keep behavior stable unless a spec explicitly says otherwise.
-- Run the full harness before and after refactors.
+- Run `make verify` before and after refactors.
 - Keep API keys in `.env` or environment variables only.
 - Prefer small modules with injected external clients so tests stay offline.
 - Update `AGENTS.md` when a future agent needs new handoff context.
@@ -126,20 +144,10 @@ this project's pod:
 podman pod rm pod_newpapers
 ```
 
-## Fixed OpenCode Agents
+## OpenCode Agents
 
-Current project agents in `opencode.json`:
-
-- `lint`: `opencode/deepseek-v4-flash-free`
-- `implement`: `acbpro/glm-5.1`
-- `debate-deepseek`: `opencode/deepseek-v4-flash-free`
-- `debate-mimo`: `opencode/mimo-v2.5-free`
-- `debate-nemotron`: `opencode/nemotron-3-super-free`
-- `debate-glm`: `acbpro/glm-5.1`
-- `debate-gpt55`: `acbpro/gpt-5.5`
-- `debate-judge`: `acbpro/gpt-5.5`
-
-Verify they are loaded with:
+`opencode.json` is the source of truth for project agents, model mappings,
+permissions, and default agent selection. Verify they are loaded with:
 
 ```bash
 opencode agent list

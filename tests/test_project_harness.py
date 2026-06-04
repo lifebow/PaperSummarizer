@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -6,6 +9,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProjectHarnessTests(unittest.TestCase):
+    def _git(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-c", "user.name=Harness Test", "-c", "user.email=harness@example.test", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def test_pyproject_declares_ruff_harness(self):
         text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
@@ -18,14 +30,104 @@ class ProjectHarnessTests(unittest.TestCase):
     def test_project_docs_describe_common_commands(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         development = (ROOT / "docs" / "development.md").read_text(encoding="utf-8")
+        harness = (ROOT / "scripts" / "harness.sh").read_text(encoding="utf-8")
 
         self.assertIn("paper-radar", readme)
-        self.assertIn("python3 -m unittest discover -v", readme)
-        self.assertIn("python3 -m ruff check .", development)
-        self.assertIn("python3 -m ruff format --check .", development)
+        self.assertIn("make verify", readme)
+        self.assertIn("scripts/harness.sh --pre-push", readme)
+        self.assertIn("make verify", development)
+        self.assertIn("scripts/install-hooks.sh", development)
+        self.assertIn("python3 -m ruff check .", harness)
+        self.assertIn("python3 -m ruff format --check .", harness)
+        self.assertIn("python3 -m unittest discover -v", harness)
         self.assertIn("No real network calls", development)
         self.assertIn("Harness Verification Record", development)
         self.assertIn("OpenCode State And Sandbox", development)
+
+    def test_machine_enforced_harness_files_exist_and_are_executable(self):
+        for rel in ("scripts/harness.sh", ".githooks/pre-push", "scripts/install-hooks.sh"):
+            path = ROOT / rel
+            self.assertTrue(path.exists(), f"{rel} missing")
+            self.assertTrue(os.access(path, os.X_OK), f"{rel} is not executable")
+
+    def test_machine_enforced_harness_commands_are_wired(self):
+        harness_path = ROOT / "scripts" / "harness.sh"
+        makefile_path = ROOT / "Makefile"
+        pre_push_path = ROOT / ".githooks" / "pre-push"
+        install_hooks_path = ROOT / "scripts" / "install-hooks.sh"
+        for path in (harness_path, makefile_path, pre_push_path, install_hooks_path):
+            self.assertTrue(path.exists(), f"{path.relative_to(ROOT)} missing")
+
+        harness = harness_path.read_text(encoding="utf-8")
+        makefile = makefile_path.read_text(encoding="utf-8")
+        pre_push = pre_push_path.read_text(encoding="utf-8")
+        install_hooks = install_hooks_path.read_text(encoding="utf-8")
+
+        self.assertIn("python3 -m ruff check .", harness)
+        self.assertIn("python3 -m ruff format --check .", harness)
+        self.assertIn("python3 -m unittest discover -v", harness)
+        self.assertLess(harness.index("python3 -m ruff check ."), harness.index("python3 -m unittest discover -v"))
+        self.assertIn("scripts/harness.sh", makefile)
+        self.assertIn("--pre-push", pre_push)
+        self.assertIn("core.hooksPath", install_hooks)
+        self.assertIn(".githooks", install_hooks)
+
+    def test_refactor_cadence_gate_blocks_after_five_features(self):
+        harness = ROOT / "scripts" / "harness.sh"
+        self.assertTrue(harness.exists(), "scripts/harness.sh missing")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._git(repo, "init", "-q")
+            self._git(repo, "commit", "--allow-empty", "-m", "refactor: checkpoint")
+
+            for i in range(4):
+                self._git(repo, "commit", "--allow-empty", "-m", f"feat: feature {i + 1}")
+
+            ok = subprocess.run(
+                [str(harness), "--refactor-check-only"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+            self.assertIn("4 feature commits", ok.stdout)
+
+            self._git(repo, "commit", "--allow-empty", "-m", "feat: feature 5")
+            due = subprocess.run(
+                [str(harness), "--refactor-check-only"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(due.returncode, 0)
+            self.assertIn("REFACTOR DUE", due.stdout + due.stderr)
+
+            self._git(repo, "commit", "--allow-empty", "-m", "refactor: cleanup checkpoint")
+            reset = subprocess.run(
+                [str(harness), "--refactor-check-only"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(reset.returncode, 0, reset.stdout + reset.stderr)
+            self.assertIn("0 feature commits", reset.stdout)
+
+    def test_docs_describe_implemented_machine_enforced_harness(self):
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        opencode = (ROOT / "docs" / "opencode.md").read_text(encoding="utf-8")
+        development = (ROOT / "docs" / "development.md").read_text(encoding="utf-8")
+
+        combined = "\n".join([agents, opencode, development])
+        self.assertIn("scripts/harness.sh", combined)
+        self.assertIn("make verify", combined)
+        self.assertNotIn("This feature is not implemented yet", combined)
+        self.assertNotIn("currently known to lack `.git`", combined)
+        self.assertNotIn("`lint`: `opencode/deepseek-v4-flash-free`", development)
+        self.assertNotIn("`implement`: `acbpro/glm-5.1`", development)
 
     def test_opencode_entrypoint_loads_workflow_docs(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -76,9 +178,11 @@ class ProjectHarnessTests(unittest.TestCase):
         self.assertIn("Feature Test Matrix", feature_plan)
         self.assertIn("Docker Deploy Smoke Gate", feature_plan)
         self.assertIn("Autonomous Subagent Execution Gate", feature_plan)
-        lint_index = feature_plan.index("python3 -m ruff check .")
-        test_index = feature_plan.index("python3 -m unittest discover -v")
-        self.assertLess(lint_index, test_index)
+        self.assertIn("scripts/harness.sh", feature_plan)
+        self.assertIn("scripts/harness.sh --pre-push", feature_plan)
+        verify_index = feature_plan.index("scripts/harness.sh")
+        pre_push_index = feature_plan.index("scripts/harness.sh --pre-push")
+        self.assertLess(verify_index, pre_push_index)
 
         self.assertIn("User Model Selection Gate", debate_brief)
         self.assertIn("USER_CHOSEN_MODEL", debate_brief)
@@ -93,6 +197,8 @@ class ProjectHarnessTests(unittest.TestCase):
         self.assertIn("Failure/retry behavior", test_matrix)
         self.assertIn("Backward compatibility", test_matrix)
         self.assertIn("Refactor safety", test_matrix)
+        self.assertIn("scripts/harness.sh", test_matrix)
+        self.assertIn("scripts/harness.sh --pre-push", test_matrix)
 
     def test_integration_test_files_exist(self):
         test_dir = ROOT / "tests"

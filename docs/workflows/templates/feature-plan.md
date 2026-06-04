@@ -26,11 +26,9 @@ Describe the feature in one sentence.
 The coordinator must orchestrate the work. The coordinator must not run
 mechanical checks directly when subagents or OpenCode runners are available.
 
-Harness hardening note: the approved design
-`docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md` will add
-`scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate. Until
-that implementation exists, keep the explicit commands below. After it exists,
-prefer the canonical harness command in generated plans.
+Use the canonical harness command for mechanical verification. It runs lint,
+format-check, and full unittest regression in the required order. Use pre-push
+mode to include the refactor cadence gate.
 
 ```yaml
 stages:
@@ -40,30 +38,24 @@ stages:
     owns:
       - FILES_TO_EDIT
 
-  - id: lint
+  - id: verify
     runner: subagent
     model: fast
-    command: python3 -m ruff check .
+    command: scripts/harness.sh
 
-  - id: format-check
+  - id: pre-push-check
     runner: subagent
     model: fast
-    command: python3 -m ruff format --check .
-
-  - id: regression-test
-    runner: subagent
-    model: fast
-    command: python3 -m unittest discover -v
+    command: scripts/harness.sh --pre-push
     depends_on:
-      - lint
-      - format-check
+      - verify
 
   - id: docker-smoke
     runner: subagent
     model: fast
-    command: docker compose run --rm paper-radar --help
+    command: podman compose run --rm paper-radar --help
     depends_on:
-      - regression-test
+      - pre-push-check
 ```
 
 ## Feature Test Matrix
@@ -83,15 +75,14 @@ Required categories:
 
 ## Lint Before Test Gate
 
-The lint commands must pass before full tests run:
+The canonical harness must pass before full tests are considered verified:
 
 ```bash
-python3 -m ruff check .
-python3 -m ruff format --check .
-python3 -m unittest discover -v
+scripts/harness.sh
 ```
 
-If lint fails, stop and fix lint before running tests.
+If lint or format-check fails inside the harness, stop and fix it before
+claiming regression verification.
 
 ## Regression Gate
 
@@ -105,7 +96,7 @@ Before marking the feature done:
 Command:
 
 ```bash
-python3 -m unittest discover -v
+scripts/harness.sh
 ```
 
 ## Refactor Cadence Gate
@@ -113,9 +104,12 @@ python3 -m unittest discover -v
 After every 5 feature additions, stop and run a refactor checkpoint before
 starting the next feature.
 
-After machine-enforced harness hardening is implemented, pre-push blocks when
-there are at least 5 `feat:` commits since the latest reachable `refactor:`
-commit.
+Pre-push blocks when there are at least 5 `feat:` commits since the latest
+reachable `refactor:` commit:
+
+```bash
+scripts/harness.sh --pre-push
+```
 
 Refactor checkpoint checklist:
 
@@ -147,8 +141,8 @@ BLOCKED: cannot refactor safely because workspace has no .git repository.
 When Docker files exist, finish with:
 
 ```bash
-docker compose build
-docker compose run --rm paper-radar --help
+podman compose build
+podman compose run --rm paper-radar --help
 ```
 
 The smoke run must not call real APIs.
@@ -157,9 +151,8 @@ The smoke run must not call real APIs.
 
 - [ ] User decision approved.
 - [ ] Comprehensive tests written first.
-- [ ] Lint subagent passed.
-- [ ] Format-check subagent passed.
-- [ ] Full regression test subagent passed.
+- [ ] `scripts/harness.sh` subagent passed.
+- [ ] `scripts/harness.sh --pre-push` subagent passed.
 - [ ] Docker smoke subagent passed or blocker recorded.
 - [ ] Commit checkpoint exists before any refactor.
 - [ ] `AGENTS.md` updated when handoff context changed.

@@ -46,16 +46,22 @@ debating, implementing, testing, refactoring, or deploy-smoke verification.
 
 ## Verification Status
 
-Last checked on 2026-06-04 from this workspace during machine-enforced harness review:
+Last checked on 2026-06-04 from this workspace after machine-enforced harness implementation:
 
 ```bash
-python3 -m ruff check .
-python3 -m ruff format --check .
-python3 -m unittest discover -v
+scripts/harness.sh
+scripts/harness.sh --pre-push
+scripts/install-hooks.sh
+git config --get core.hooksPath
 ```
 
-Result: ruff lint passed, ruff format-check passed, and unittest reported
-`Ran 129 tests in 2.231s - OK (skipped=8)`.
+Result: canonical harness passed, pre-push simulation passed, hook path installed,
+and `git config --get core.hooksPath` returned `.githooks`. Ruff lint passed,
+Ruff format-check passed, and unittest reported
+`Ran 133 tests - OK (skipped=8)` during pre-push simulation.
+Pre-commit refactor cadence check reported 3 `feat:` commits since the latest
+reachable `refactor:` commit (threshold: 5). Use
+`scripts/harness.sh --refactor-check-only` for the current count.
 
 Warnings seen during tests:
 
@@ -232,12 +238,13 @@ Initial harness verification at implementation time: 42 tests passed, ruff
 check passed, and ruff format passed. For the current baseline, use the
 Verification Status section above.
 
-### Machine-Enforced Harness Direction
+### Machine-Enforced Harness Status
 
-Pending design spec: `docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md`
+Design spec: `docs/superpowers/specs/2026-06-04-machine-enforced-harness-design.md`
+Implementation plan: `docs/superpowers/plans/2026-06-04-machine-enforced-harness-implementation.md`
 
-User approved hardening the harness so core gates are enforced by executable
-checks instead of Markdown memory. The planned implementation is:
+Machine-enforced harness is implemented so core gates are enforced by executable
+checks instead of Markdown memory:
 
 - `scripts/harness.sh` as the canonical lint/format/unittest entrypoint.
 - `Makefile` alias `make verify` pointing to the canonical script.
@@ -246,25 +253,17 @@ checks instead of Markdown memory. The planned implementation is:
 - a pre-push `refactor-due` hard gate that blocks when there are at least 5
   `feat:` commits since the latest reachable `refactor:` commit.
 
-Current refactor cadence at review time: 3 `feat:` commits since the latest
-`refactor:` commit, so the planned gate would not block yet.
+Install hooks in a new clone or tab workspace with:
 
-This feature is not implemented yet. Until it is implemented, continue running
-the raw commands in the Verification Status section.
+```bash
+scripts/install-hooks.sh
+```
 
 ### OpenCode Config (`opencode.json`)
 
-- `default_agent`: `coordinator` (primary orchestrator, model `z.ai/glm5.1`)
-- `small_model`: `z.ai/glm4.5-air`
-- Subagent `lint`: model `z.ai/glm4.5-air`, edit deny, bash allow
-- Subagent `implement`: model `z.ai/glm5.1`, edit allow, bash allow
-- Debate agents with fixed model mappings:
-  - `debate-deepseek`: `opencode/deepseek-v4-flash-free`
-  - `debate-mimo`: `opencode/mimo-v2.5-free`
-  - `debate-nemotron`: `opencode/nemotron-3-super-free`
-  - `debate-glm`: `acbpro/glm-5.1`
-  - `debate-gpt55`: `acbpro/gpt-5.5`
-  - `debate-judge`: `acbpro/gpt-5.5`
+`opencode.json` is the source of truth for the default agent, small model,
+subagent permissions, and debate model mappings. Do not duplicate those mappings
+in docs.
 
 The `coordinator` agent is the default entry point for OpenCode sessions.
 It understands the full harness workflow and delegates to subagents.
@@ -320,5 +319,5 @@ Important workflow rules encoded in docs:
 - Every 5 feature additions require a simplicity/reuse refactor checkpoint.
 - Commit before refactor; if there is no `.git`, refactor is blocked.
 - Docker/Compose smoke is a final gate when deploy files exist.
-- Pending machine-enforced harness design will replace memory-based verification
-  with `scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate.
+- Machine-enforced harness replaces memory-based verification with
+  `scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate.
