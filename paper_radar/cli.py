@@ -187,16 +187,22 @@ def _handle_enrich(args: argparse.Namespace) -> None:
 
 
 def _handle_serve_bot(args: argparse.Namespace) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config = load_config(args.config, args.env)
     require_llm_config(config)
     db = _get_db(args)
     llm_client = LlmClient(base_url=config.llm.base_url, api_key=config.llm.api_key, model=config.llm.model)
     telegram = TelegramSender(bot_token=config.telegram.bot_token, chat_id=config.telegram.chat_id)
+
+    # Full pipeline service for hourly crawl
+    llm = DefaultPaperLlm(llm_client)
+    radar_service = PaperRadarService(config=config, db=db, llm=llm, telegram=telegram)
+
     if args.port:
         from dataclasses import replace
 
         config = replace(config, bot=replace(config.bot, webhook_port=args.port))
-    server = BotServer(config=config, db=db, llm=llm_client, telegram=telegram)
+    server = BotServer(config=config, db=db, llm=llm_client, telegram=telegram, radar_service=radar_service)
     if args.poll:
         server.start_polling()
     else:

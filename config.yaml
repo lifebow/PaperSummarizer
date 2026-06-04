@@ -1,5 +1,5 @@
 topics:
-  categories: ["cs.AI"]
+  categories: ["cs.AI", "cs.CL", "cs.CR", "cs.PF", "cs.SE", "cs.CV"]
   queries:
     - "LLM agent"
     - "AI safety"
@@ -12,7 +12,7 @@ daemon:
   first_run_lookback_hours: 48
 
 filters:
-  max_papers_per_batch: 20
+  max_papers_per_batch: 50
   relevance_threshold: 7
   grounding_threshold: 7
   idea_threshold: 6
@@ -20,7 +20,7 @@ filters:
 pipeline:
   llm_concurrency: 4
   download_concurrency: 3
-  max_papers_per_run: 50
+  max_papers_per_run: 200
   max_llm_calls_per_run: 80
   max_summary_candidates_per_run: 20
   enable_relevance_cache: true

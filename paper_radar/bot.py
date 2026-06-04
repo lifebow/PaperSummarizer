@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
@@ -150,7 +151,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 
 class BotServer:
-    """Webhook-based Telegram bot server for handling expand requests."""
+    """Telegram bot server: hourly crawl pipeline + expand request handler."""
 
     def __init__(
         self,
@@ -159,11 +160,14 @@ class BotServer:
         db: PaperRadarDb,
         llm: LlmClient,
         telegram: TelegramSender,
+        radar_service: Any | None = None,
     ):
         self.config = config
         self.db = db
         self.telegram = telegram
         self.pipeline = ExpandPipeline(db=db, llm=llm, telegram=telegram)
+        self.radar_service = radar_service
+        self._schedule_stop = threading.Event()
 
     def start(self) -> None:
         """Start the webhook server."""
@@ -184,13 +188,57 @@ class BotServer:
             server.shutdown()
 
     def start_polling(self) -> None:
-        """Start long-polling loop — no public URL needed."""
+        """Start long-polling loop with hourly crawl pipeline.
+
+        1. Run `run_once` immediately on startup.
+        2. Schedule hourly crawl in background thread.
+        3. Start polling loop for Telegram callbacks in main thread.
+        """
         import requests as _requests
 
         # Delete any existing webhook so getUpdates works
         self.telegram.delete_webhook()
         logger.info("Webhook deleted, starting polling mode")
 
+        # --- Run first crawl immediately ---
+        if self.radar_service:
+            logger.info("Running initial crawl on startup...")
+            try:
+                result = self.radar_service.run_once()
+                logger.info(
+                    "Initial crawl done: found=%d accepted=%d errors=%d",
+                    result.get("found_count", 0),
+                    result.get("accepted_count", 0),
+                    result.get("error_count", 0),
+                )
+            except Exception as exc:
+                logger.error("Initial crawl failed: %s", exc)
+        else:
+            logger.warning("No radar_service — hourly crawl disabled")
+
+        # --- Schedule hourly crawl in background ---
+        if self.radar_service:
+            interval = self.config.daemon.interval_minutes * 60
+
+            def _scheduler_loop() -> None:
+                while not self._schedule_stop.wait(timeout=interval):
+                    try:
+                        logger.info("Scheduled hourly crawl starting...")
+                        result = self.radar_service.run_once()
+                        logger.info(
+                            "Scheduled crawl done: found=%d accepted=%d errors=%d",
+                            result.get("found_count", 0),
+                            result.get("accepted_count", 0),
+                            result.get("error_count", 0),
+                        )
+                    except Exception as exc:
+                        logger.error("Scheduled crawl failed: %s", exc)
+
+            scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
+            scheduler_thread.start()
+            logger.info("Hourly crawl scheduler started (interval=%dm)", self.config.daemon.interval_minutes)
+
+        # --- Polling loop (main thread, blocks here) ---
         base = f"https://api.telegram.org/bot{self.telegram.bot_token}"
         offset = 0
 
@@ -223,6 +271,7 @@ class BotServer:
 
         except KeyboardInterrupt:
             logger.info("Polling stopped")
+            self._schedule_stop.set()
 
     def handle_update(self, update: dict[str, Any]) -> None:
         """Process an incoming Telegram update."""
