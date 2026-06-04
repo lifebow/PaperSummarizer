@@ -31,6 +31,10 @@ class LlmDigestTests(unittest.TestCase):
         self.assertTrue(passes_quality_gate({"relevance_score": 7, "grounding_score": 7, "idea_score": 6}))
         self.assertFalse(passes_quality_gate({"relevance_score": 6.9, "grounding_score": 9, "idea_score": 9}))
 
+    def test_quality_gate_normalizes_zero_to_one_scores(self):
+        self.assertTrue(passes_quality_gate({"relevance_score": 0.9, "grounding_score": 0.8, "idea_score": 0.7}))
+        self.assertFalse(passes_quality_gate({"relevance_score": 0.9, "grounding_score": 0.5, "idea_score": 0.7}))
+
     def test_extracts_json_from_fenced_model_response(self):
         text = '```json\n{"relevance_score": 8, "reason": "good"}\n```'
         self.assertEqual(_extract_json_object(text)["relevance_score"], 8)

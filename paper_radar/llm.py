@@ -47,6 +47,15 @@ class LlmClient:
         return _extract_json_object(content)
 
 
+def normalize_score(value: Any) -> float:
+    score = float(value or 0)
+    # Some models return 0-1 scores despite the prompt asking for 0-10.
+    # Treat fractional scores as probabilities and map them back to 0-10.
+    if 0 < score <= 1:
+        return score * 10
+    return score
+
+
 def passes_quality_gate(
     scores: dict[str, Any],
     *,
@@ -54,10 +63,11 @@ def passes_quality_gate(
     grounding_threshold: float = 7,
     idea_threshold: float = 6,
 ) -> bool:
+
     return (
-        float(scores.get("relevance_score", 0)) >= relevance_threshold
-        and float(scores.get("grounding_score", 0)) >= grounding_threshold
-        and float(scores.get("idea_score", 0)) >= idea_threshold
+        normalize_score(scores.get("relevance_score", 0)) >= relevance_threshold
+        and normalize_score(scores.get("grounding_score", 0)) >= grounding_threshold
+        and normalize_score(scores.get("idea_score", 0)) >= idea_threshold
     )
 
 
