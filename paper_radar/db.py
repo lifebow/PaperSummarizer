@@ -108,6 +108,13 @@ class PaperRadarDb:
                     affiliation TEXT NOT NULL DEFAULT '',
                     updated_at TEXT NOT NULL DEFAULT ''
                 );
+
+                CREATE TABLE IF NOT EXISTS relevance_cache (
+                    paper_hash TEXT PRIMARY KEY,
+                    relevance_score REAL NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    cached_at TEXT NOT NULL
+                );
                 """
             )
             self._migrate_schema(conn)
@@ -421,6 +428,33 @@ class PaperRadarDb:
                     updated_at=excluded.updated_at
                 """,
                 (s2_author_id, name, affiliation, now),
+            )
+
+    def get_cached_relevance(self, paper_hash: str) -> dict[str, Any] | None:
+        """Get cached relevance score for a paper hash."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT relevance_score, reason FROM relevance_cache WHERE paper_hash = ?",
+                (paper_hash,),
+            ).fetchone()
+        if row:
+            return {"relevance_score": row["relevance_score"], "reason": row["reason"]}
+        return None
+
+    def save_cached_relevance(self, paper_hash: str, score: float, reason: str) -> None:
+        """Cache relevance score for a paper hash."""
+        now = now_utc_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO relevance_cache (paper_hash, relevance_score, reason, cached_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(paper_hash) DO UPDATE SET
+                    relevance_score=excluded.relevance_score,
+                    reason=excluded.reason,
+                    cached_at=excluded.cached_at
+                """,
+                (paper_hash, score, reason, now),
             )
 
     def _connect(self) -> sqlite3.Connection:

@@ -63,6 +63,17 @@ class BotConfig:
 
 
 @dataclass(frozen=True)
+class PipelineConfig:
+    llm_concurrency: int = 4
+    download_concurrency: int = 3
+    max_papers_per_run: int = 50
+    max_llm_calls_per_run: int = 80
+    max_summary_candidates_per_run: int = 20
+    enable_relevance_cache: bool = True
+    merge_summary_qa: bool = False
+
+
+@dataclass(frozen=True)
 class AppConfig:
     topics: TopicConfig = field(default_factory=TopicConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
@@ -72,6 +83,7 @@ class AppConfig:
     llm: LlmConfig = field(default_factory=LlmConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     bot: BotConfig = field(default_factory=BotConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
 
 def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = ".env") -> AppConfig:
@@ -87,6 +99,7 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
     llm = raw.get("llm", {})
     telegram = raw.get("telegram", {})
     bot = raw.get("bot", {})
+    pipeline = raw.get("pipeline", {})
 
     s2_key_env = str(s2.get("api_key_env", "SEMANTIC_SCHOLAR_API_KEYS"))
     llm_base_env = str(llm.get("base_url_env", "OPENAI_BASE_URL"))
@@ -135,6 +148,15 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
         bot=BotConfig(
             webhook_url=_env(str(bot.get("webhook_url_env", "BOT_WEBHOOK_URL")), env_values),
             webhook_port=int(bot.get("webhook_port", 8080)),
+        ),
+        pipeline=PipelineConfig(
+            llm_concurrency=int(pipeline.get("llm_concurrency", 4)),
+            download_concurrency=int(pipeline.get("download_concurrency", 3)),
+            max_papers_per_run=int(pipeline.get("max_papers_per_run", 50)),
+            max_llm_calls_per_run=int(pipeline.get("max_llm_calls_per_run", 80)),
+            max_summary_candidates_per_run=int(pipeline.get("max_summary_candidates_per_run", 20)),
+            enable_relevance_cache=bool(pipeline.get("enable_relevance_cache", True)),
+            merge_summary_qa=bool(pipeline.get("merge_summary_qa", False)),
         ),
     )
 

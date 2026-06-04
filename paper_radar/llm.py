@@ -103,6 +103,33 @@ def build_summary_prompt(title: str, abstract: str, full_text_markdown: str) -> 
     return system, user
 
 
+def build_summary_qa_prompt(
+    title: str, abstract: str, full_text_markdown: str, *, topics: list[str] | None = None
+) -> tuple[str, str]:
+    """Combined summary + QA in one LLM call. For future use when merge_summary_qa=True."""
+    topic_hint = ""
+    if topics:
+        topic_hint = f" User interests: {', '.join(topics)}."
+    system = (
+        "You summarize AI papers and judge quality. Return strict JSON with keys:\n"
+        "- background_needed, what_the_paper_does, novelty, method, math_technical_core,\n"
+        "  results_claims, limitations_uncertainty, ideas_to_try\n"
+        "- author_names: list ALL author names from the paper header\n"
+        "- author_affiliations: list unique institution names from the header\n"
+        "- relevance_score (0-10), grounding_score (0-10), idea_score (0-10)\n"
+        "- qa_reason: brief justification for the scores" + topic_hint
+    )
+    user = json.dumps(
+        {
+            "title": title,
+            "abstract": abstract,
+            "full_text_markdown": _truncate(full_text_markdown),
+        },
+        ensure_ascii=False,
+    )
+    return system, user
+
+
 def build_qa_prompt(summary: dict[str, Any], abstract: str, full_text_markdown: str) -> tuple[str, str]:
     system = "You are a QA judge. Check relevance, grounding, and idea quality. Return strict JSON."
     user = json.dumps(

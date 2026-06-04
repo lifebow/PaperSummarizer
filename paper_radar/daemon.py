@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from ._time import default_since, local_now, now_utc_iso
@@ -17,6 +19,25 @@ from .retrieval import PdfDownloader, _normalize_arxiv_id, make_default_retrieve
 from .telegram import TelegramSender, make_expand_keyboard
 
 logger = logging.getLogger(__name__)
+
+
+class RunBudget:
+    """Track LLM call count against a per-run limit."""
+
+    def __init__(self, max_calls: int):
+        self.max_calls = max_calls
+        self.calls_used = 0
+
+    def can_call(self) -> bool:
+        return self.calls_used < self.max_calls
+
+    def record_call(self) -> None:
+        self.calls_used += 1
+
+
+def _hash_paper(title: str, abstract: str) -> str:
+    """Deterministic hash for relevance cache key."""
+    return hashlib.sha256(f"{title}||{abstract}".encode()).hexdigest()[:16]
 
 
 class DefaultPaperLlm:
@@ -71,8 +92,9 @@ class PaperRadarService:
         now = local_now(self.config.daemon.timezone)
         digest_date = now_date or now.strftime("%Y-%m-%d")
         batch_time = now_time or now.strftime("%H:%M")
-        found_count = accepted_count = error_count = 0
+        accepted_count = error_count = 0
         accepted_for_digest: list[dict[str, Any]] = []
+        budget = RunBudget(self.config.pipeline.max_llm_calls_per_run)
 
         try:
             papers = self.retriever.search_recent(
@@ -83,81 +105,45 @@ class PaperRadarService:
             )
             found_count = len(papers)
             self._enrich_author_affiliations(papers)
+
+            # Deduplicate — skip papers already in DB
+            new_papers: list[Any] = []
             for paper in papers:
-                # Normalize arxiv_id (strip v1 suffix) for dedup
                 paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
-                if self.db.get_paper_by_arxiv_id(paper.arxiv_id):
-                    continue
-                try:
-                    relevance = (
-                        self.llm.relevance(paper, self.config.topics.queries) if self.llm else {"relevance_score": 10}
-                    )
-                    if float(relevance.get("relevance_score", 0)) < self.config.filters.relevance_threshold:
-                        continue
-                    paper_id = self.db.upsert_paper(paper.to_record())
-                    pdf_path = self.downloader.download(paper, self.config.paths.tmp_pdfs)
+                if not self.db.get_paper_by_arxiv_id(paper.arxiv_id):
+                    new_papers.append(paper)
 
-                    def process(path, *, current_paper=paper, current_paper_id=paper_id, current_relevance=relevance):
-                        extracted = self.extractor.extract(path)
-                        intro = extract_introduction(extracted.text, current_paper.abstract)
-                        # Include PDF header (first ~3000 chars with authors/affiliations under title)
-                        header_text = extracted.text[:3000]
-                        summary_text = f"{header_text}\n\n{current_paper.abstract}\n\n{intro}"
-                        summary = self.llm.summarize(current_paper, summary_text) if self.llm else {}
-                        qa = (
-                            self.llm.qa(current_paper, summary, current_paper.abstract)
-                            if self.llm
-                            else {
-                                "relevance_score": 10,
-                                "grounding_score": 10,
-                                "idea_score": 10,
-                                "qa_reason": "No LLM configured; accepted by default.",
-                            }
-                        )
-                        accepted = passes_quality_gate(
-                            qa,
-                            relevance_threshold=self.config.filters.relevance_threshold,
-                            grounding_threshold=self.config.filters.grounding_threshold,
-                            idea_threshold=self.config.filters.idea_threshold,
-                        )
-                        enriched_summary = dict(summary)
-                        enriched_summary["qa_scores"] = {
-                            "relevance": qa.get("relevance_score", 0),
-                            "grounding": qa.get("grounding_score", 0),
-                            "idea": qa.get("idea_score", 0),
-                        }
-                        enriched_summary["qa_reason"] = qa.get("qa_reason", "")
-                        self.db.record_result(
-                            paper_id=current_paper_id,
-                            run_id=run_id,
-                            candidate_relevance_score=float(current_relevance.get("relevance_score", 0)),
-                            extractor_name=extracted.extractor_name,
-                            extracted_text_chars=len(extracted.text),
-                            summary=enriched_summary,
-                            relevance_score=float(qa.get("relevance_score", 0)),
-                            grounding_score=float(qa.get("grounding_score", 0)),
-                            idea_score=float(qa.get("idea_score", 0)),
-                            qa_reason=str(qa.get("qa_reason", "")),
-                            accepted=accepted,
-                            digest_date=digest_date,
-                        )
-                        if accepted:
-                            accepted_for_digest.append(
-                                {
-                                    **current_paper.to_record(),
-                                    "summary": enriched_summary,
-                                    "relevance_score": qa.get("relevance_score", 0),
-                                    "grounding_score": qa.get("grounding_score", 0),
-                                    "idea_score": qa.get("idea_score", 0),
-                                }
-                            )
-                        return accepted
+            # Cap at max_papers_per_run
+            new_papers = new_papers[: self.config.pipeline.max_papers_per_run]
 
-                    if process_pdf_with_cleanup(pdf_path, process):
-                        accepted_count += 1
-                except Exception as exc:
-                    logger.exception("Paper processing failed: %s", exc)
+            # --- Phase 1: Relevance scoring (parallel, cheap) ---
+            candidates = self._phase1_relevance(new_papers, budget)
+            logger.info(
+                "Phase 1 done: %d/%d passed relevance (budget used: %d/%d)",
+                len(candidates),
+                len(new_papers),
+                budget.calls_used,
+                budget.max_calls,
+            )
+
+            # --- Phase 2: Summarize + QA (parallel, expensive) ---
+            phase2_results = self._phase2_summarize_qa(
+                candidates,
+                run_id,
+                digest_date,
+                batch_time,
+                budget,
+            )
+            for result in phase2_results:
+                if result.get("accepted"):
+                    accepted_count += 1
+                    accepted_for_digest.append(result)
+                elif result.get("error"):
                     error_count += 1
+
+            # Sort deterministically before writing
+            accepted_for_digest.sort(key=lambda p: p.get("arxiv_id", ""))
+
             if accepted_for_digest:
                 append_digest_batch(self.config.paths.digests, digest_date, batch_time, accepted_for_digest)
             self.send_hourly_telegram(accepted_for_digest, digest_date, batch_time)
@@ -166,8 +152,206 @@ class PaperRadarService:
             return {"found_count": found_count, "accepted_count": accepted_count, "error_count": error_count}
         except Exception as exc:
             logger.exception("Run failed: %s", exc)
-            self.db.finish_run(run_id, "error", found_count, accepted_count, error_count + 1)
+            self.db.finish_run(
+                run_id,
+                "error",
+                found_count if "found_count" in dir() else 0,
+                accepted_count,
+                error_count + 1,
+            )
             raise
+
+    def _phase1_relevance(
+        self,
+        papers: list[Any],
+        budget: RunBudget,
+    ) -> list[tuple[Any, dict[str, Any]]]:
+        """Score relevance in parallel. Returns [(paper, relevance)] for passing papers."""
+        if not papers:
+            return []
+
+        candidates: list[tuple[Any, dict[str, Any]]] = []
+        need_scoring: list[tuple[Any, str]] = []  # (paper, hash)
+
+        # Check cache first
+        for paper in papers:
+            if not self.llm:
+                candidates.append((paper, {"relevance_score": 10}))
+                continue
+            paper_hash = _hash_paper(paper.title, paper.abstract)
+            if self.config.pipeline.enable_relevance_cache:
+                cached = self.db.get_cached_relevance(paper_hash)
+                if cached is not None:
+                    score = float(cached["relevance_score"])
+                    if score >= self.config.filters.relevance_threshold:
+                        candidates.append((paper, cached))
+                    continue
+            need_scoring.append((paper, paper_hash))
+
+        if not need_scoring or not self.llm:
+            return candidates
+
+        # Parallel LLM relevance scoring
+        max_workers = min(self.config.pipeline.llm_concurrency, len(need_scoring))
+
+        def score_one(paper: Any, paper_hash: str) -> tuple[Any, str, dict[str, Any] | None]:
+            if not budget.can_call():
+                return (paper, paper_hash, None)
+            budget.record_call()
+            try:
+                score = self.llm.relevance(paper, self.config.topics.queries)
+                return (paper, paper_hash, score)
+            except Exception as exc:
+                logger.warning("Relevance scoring failed for %s: %s", paper.arxiv_id, exc)
+                return (paper, paper_hash, None)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(score_one, p, h) for p, h in need_scoring]
+            for future in as_completed(futures):
+                paper, paper_hash, score = future.result()
+                if score is not None:
+                    # Cache both accepted and rejected
+                    if self.config.pipeline.enable_relevance_cache:
+                        self.db.save_cached_relevance(
+                            paper_hash,
+                            float(score.get("relevance_score", 0)),
+                            str(score.get("reason", "")),
+                        )
+                    if float(score.get("relevance_score", 0)) >= self.config.filters.relevance_threshold:
+                        candidates.append((paper, score))
+
+        return candidates
+
+    def _phase2_summarize_qa(
+        self,
+        candidates: list[tuple[Any, dict[str, Any]]],
+        run_id: int,
+        digest_date: str,
+        batch_time: str,
+        budget: RunBudget,
+    ) -> list[dict[str, Any]]:
+        """Process candidates: download PDF, summarize, QA. Returns list of result dicts."""
+        if not candidates:
+            return []
+
+        results: list[dict[str, Any]] = []
+        max_workers = min(self.config.pipeline.download_concurrency, len(candidates))
+
+        def process_one(paper: Any, relevance: dict[str, Any]) -> dict[str, Any] | None:
+            try:
+                paper_id = self.db.upsert_paper(paper.to_record())
+                pdf_path = self.downloader.download(paper, self.config.paths.tmp_pdfs)
+
+                result_holder: dict[str, Any] = {}
+
+                def extract_and_analyze(path: str) -> bool:
+                    extracted = self.extractor.extract(path)
+                    intro = extract_introduction(extracted.text, paper.abstract)
+                    header_text = extracted.text[:3000]
+                    summary_text = f"{header_text}\n\n{paper.abstract}\n\n{intro}"
+
+                    # Summary LLM
+                    summary = {}
+                    qa = {}
+                    if self.llm and budget.can_call():
+                        budget.record_call()
+                        try:
+                            summary = self.llm.summarize(paper, summary_text)
+                        except Exception as exc:
+                            logger.warning("Summary failed for %s: %s", paper.arxiv_id, exc)
+                            return False
+
+                    # QA LLM
+                    if self.llm and budget.can_call():
+                        budget.record_call()
+                        try:
+                            qa = self.llm.qa(paper, summary, paper.abstract)
+                        except Exception as exc:
+                            logger.warning("QA failed for %s: %s", paper.arxiv_id, exc)
+                            qa = {
+                                "relevance_score": 10,
+                                "grounding_score": 10,
+                                "idea_score": 10,
+                                "qa_reason": f"QA error: {exc}",
+                            }
+                    elif not self.llm:
+                        qa = {
+                            "relevance_score": 10,
+                            "grounding_score": 10,
+                            "idea_score": 10,
+                            "qa_reason": "No LLM configured",
+                        }
+
+                    accepted = passes_quality_gate(
+                        qa,
+                        relevance_threshold=self.config.filters.relevance_threshold,
+                        grounding_threshold=self.config.filters.grounding_threshold,
+                        idea_threshold=self.config.filters.idea_threshold,
+                    )
+                    enriched_summary = dict(summary)
+                    enriched_summary["qa_scores"] = {
+                        "relevance": qa.get("relevance_score", 0),
+                        "grounding": qa.get("grounding_score", 0),
+                        "idea": qa.get("idea_score", 0),
+                    }
+                    enriched_summary["qa_reason"] = qa.get("qa_reason", "")
+
+                    result_holder["data"] = {
+                        **paper.to_record(),
+                        "summary": enriched_summary,
+                        "relevance_score": qa.get("relevance_score", 0),
+                        "grounding_score": qa.get("grounding_score", 0),
+                        "idea_score": qa.get("idea_score", 0),
+                        "paper_id": paper_id,
+                        "run_id": run_id,
+                        "digest_date": digest_date,
+                        "candidate_relevance": float(relevance.get("relevance_score", 0)),
+                        "extractor_name": extracted.extractor_name,
+                        "extracted_text_chars": len(extracted.text),
+                        "qa": qa,
+                        "accepted": accepted,
+                    }
+                    return accepted
+
+                process_pdf_with_cleanup(pdf_path, extract_and_analyze)
+                data = result_holder.get("data")
+                if data:
+                    return data
+                return None
+            except Exception as exc:
+                logger.exception("Paper processing failed for %s: %s", paper.arxiv_id, exc)
+                return {"error": str(exc), "arxiv_id": paper.arxiv_id}
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(process_one, p, r): p for p, r in candidates}
+            for future in as_completed(futures):
+                result = future.result()
+                if result and "error" in result:
+                    results.append(result)
+                elif result:
+                    # Sequential DB write
+                    self._record_paper_result(result)
+                    if result.get("accepted"):
+                        results.append(result)
+
+        return results
+
+    def _record_paper_result(self, data: dict[str, Any]) -> None:
+        """Write a single paper result to DB. Called sequentially from main thread."""
+        self.db.record_result(
+            paper_id=data["paper_id"],
+            run_id=data["run_id"],
+            candidate_relevance_score=data["candidate_relevance"],
+            extractor_name=data["extractor_name"],
+            extracted_text_chars=data["extracted_text_chars"],
+            summary=data["summary"],
+            relevance_score=float(data.get("qa", {}).get("relevance_score", 0)),
+            grounding_score=float(data.get("qa", {}).get("grounding_score", 0)),
+            idea_score=float(data.get("qa", {}).get("idea_score", 0)),
+            qa_reason=str(data.get("qa", {}).get("qa_reason", "")),
+            accepted=data["accepted"],
+            digest_date=data["digest_date"],
+        )
 
     def send_daily_recap(self, digest_date: str) -> bool:
         self.db.initialize()
