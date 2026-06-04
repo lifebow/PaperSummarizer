@@ -132,6 +132,10 @@ class TelegramDaemonTests(unittest.TestCase):
         self.assertEqual(result["accepted_count"], 1)
         self.assertIn("Agent Safety", digest)
         self.assertFalse(downloaded_pdf.exists())
+        # Should send scan notification, not detailed paper cards
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("1 paper mới", sent_messages[0])
+        self.assertIn("1 match", sent_messages[0])
 
     def test_run_once_drains_multiple_queue_batches_in_same_run(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -262,6 +266,87 @@ class TelegramDaemonTests(unittest.TestCase):
 
             self.assertEqual(result["accepted_count"], 0)
             self.assertEqual(saved["archive_status"], "retry_later")
+
+    def test_send_scan_notification_with_new_and_accepted(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
+                )(),
+            )
+            service.send_scan_notification(15, 3, 0, "2026-06-04", "09:00")
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("09:00", sent_messages[0])
+        self.assertIn("15 paper mới", sent_messages[0])
+        self.assertIn("3 match", sent_messages[0])
+
+    def test_send_scan_notification_zero_papers(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
+                )(),
+            )
+            service.send_scan_notification(0, 0, 0, "2026-06-04", "10:00")
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("Không có paper mới", sent_messages[0])
+
+    def test_send_scan_notification_with_errors(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
+                )(),
+            )
+            service.send_scan_notification(10, 2, 1, "2026-06-04", "11:00")
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("10 paper mới", sent_messages[0])
+        self.assertIn("2 match", sent_messages[0])
+        self.assertIn("1 lỗi", sent_messages[0])
+
+    def test_send_scan_notification_failure_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+
+            def raise_send(self, msg, **kwargs):
+                raise RuntimeError("Telegram is down")
+
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type("FakeTelegram", (), {"send_message": raise_send})(),
+            )
+            # Should not raise, just log warning
+            service.send_scan_notification(5, 1, 0, "2026-06-04", "09:00")
 
     def test_send_daily_recap_marks_sent(self):
         sent_messages = []

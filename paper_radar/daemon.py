@@ -144,7 +144,7 @@ class PaperRadarService:
                 self.config.topics.queries,
                 self.config.topics.categories,
                 since=since,
-                limit=1000,
+                limit=100,
             )
             found_count = len(found_papers)
             queued_count = self._enqueue_found_papers(found_papers)
@@ -161,7 +161,7 @@ class PaperRadarService:
 
             if accepted_for_digest:
                 append_digest_batch(self.config.paths.digests, digest_date, batch_time, accepted_for_digest)
-            self.send_hourly_telegram(accepted_for_digest, digest_date, batch_time)
+            self.send_scan_notification(found_count, accepted_count, error_count, digest_date, batch_time)
             self.db.set_state("last_successful_fetch_at", now_utc_iso())
             self.db.finish_run(run_id, "ok", found_count, accepted_count, error_count)
             return {"found_count": found_count, "accepted_count": accepted_count, "error_count": error_count}
@@ -475,6 +475,30 @@ class PaperRadarService:
             data["arxiv_id"],
             "accepted" if data["accepted"] else "rejected_qa",
         )
+
+    def send_scan_notification(
+        self,
+        found_count: int,
+        accepted_count: int,
+        error_count: int,
+        digest_date: str,
+        batch_time: str,
+    ) -> None:
+        """Send a short hourly scan notification to Telegram."""
+        parts = [f"📊 *{batch_time}* — "]
+        if found_count == 0:
+            parts.append("Không có paper mới.")
+        else:
+            parts.append(f"{found_count} paper mới")
+            if accepted_count > 0:
+                parts.append(f", *{accepted_count} match* ✅")
+            if error_count > 0:
+                parts.append(f", {error_count} lỗi")
+        msg = "".join(parts)
+        try:
+            self.telegram.send_message(msg)
+        except Exception as exc:
+            logger.warning("Scan notification failed: %s", exc)
 
     def send_daily_recap(self, digest_date: str) -> bool:
         self.db.initialize()

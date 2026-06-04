@@ -178,7 +178,7 @@ class RetrievalTests(unittest.TestCase):
         """
         session = FakeSession(
             {
-                "https://arxiv.org/list/cs/recent?skip=0&show=1000": list_html,
+                "https://arxiv.org/list/cs/recent?skip=0&show=10": list_html,
                 "https://arxiv.org/abs/2606.00001": abs_html,
             }
         )
@@ -203,7 +203,7 @@ class RetrievalTests(unittest.TestCase):
         """
         session = FakeSession(
             {
-                "https://arxiv.org/list/cs/recent?skip=0&show=1000": list_html,
+                "https://arxiv.org/list/cs/recent?skip=0&show=10": list_html,
                 "https://arxiv.org/abs/2606.00002": abs_html,
             }
         )
@@ -219,7 +219,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(
             session.urls,
             [
-                ("https://arxiv.org/list/cs/recent?skip=0&show=1000", 30),
+                ("https://arxiv.org/list/cs/recent?skip=0&show=10", 30),
                 ("https://arxiv.org/abs/2606.00002", 30),
             ],
         )
@@ -229,7 +229,7 @@ class RetrievalTests(unittest.TestCase):
 
         ArxivClient(client=session).search_recent(["math.CO"], since="2026-06-01", limit=10)
 
-        self.assertEqual(session.urls[0][0], "https://arxiv.org/list/math/recent?skip=0&show=1000")
+        self.assertEqual(session.urls[0][0], "https://arxiv.org/list/math/recent?skip=0&show=10")
 
     def test_hybrid_retriever_returns_arxiv_direct_results_without_s2_lookup(self):
         arxiv_paper = PaperMetadata(

@@ -166,7 +166,7 @@ class ArxivClient:
         from html import unescape
 
         archive = self._archive_from_categories(categories)
-        show = scan_limit or max(limit, 1000)
+        show = scan_limit or limit
         url = f"https://arxiv.org/list/{archive}/recent?skip=0&show={show}"
 
         logger.info("arXiv list request: %s", url)
