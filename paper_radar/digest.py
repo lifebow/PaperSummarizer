@@ -81,7 +81,13 @@ def render_paper_short(paper: dict[str, Any]) -> str:
     idea = (summary.get("ideas_to_try") or [""])[0]
     link = paper.get("pdf_url") or f"https://arxiv.org/abs/{paper.get('arxiv_id', '')}"
     why = summary.get("what_the_paper_does", "")
-    return f"{paper.get('title', 'Untitled')}\n{link}\n{why}\nIdea: {idea}"
+    published = paper.get("published_at", "")
+    date_line = f"Published: {published}" if published else ""
+    lines = [paper.get("title", "Untitled")]
+    if date_line:
+        lines.append(date_line)
+    lines.extend([link, why, f"Idea: {idea}"])
+    return "\n".join(lines)
 
 
 def render_telegram_full(digest_date: str, papers: list[dict[str, Any]], *, limit: int = 15) -> str:
