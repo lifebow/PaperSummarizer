@@ -78,15 +78,22 @@ def append_digest_batch(digest_dir: Path, digest_date: str, batch_time: str, pap
 
 def render_paper_short(paper: dict[str, Any]) -> str:
     summary = paper.get("summary", {})
-    idea = (summary.get("ideas_to_try") or [""])[0]
+    ideas = summary.get("ideas_to_try") or []
+    idea = ideas[0] if ideas else ""
     link = paper.get("pdf_url") or f"https://arxiv.org/abs/{paper.get('arxiv_id', '')}"
     why = summary.get("what_the_paper_does", "")
+    novelty = summary.get("novelty", "")
     published = paper.get("published_at", "")
-    date_line = f"Published: {published}" if published else ""
-    lines = [paper.get("title", "Untitled")]
-    if date_line:
-        lines.append(date_line)
-    lines.extend([link, why, f"Idea: {idea}"])
+    lines = [f"📄 *{paper.get('title', 'Untitled')}*"]
+    if published:
+        lines.append(f"📅 {published}")
+    lines.append(f"🔗 [{paper.get('arxiv_id', 'link')}]({link})")
+    if why:
+        lines.append(f"\n🔍 *What:* {why}")
+    if novelty:
+        lines.append(f"✨ *Novelty:* {novelty}")
+    if idea:
+        lines.append(f"💡 *Idea:* {idea}")
     return "\n".join(lines)
 
 

@@ -26,7 +26,7 @@ class TelegramSender:
             return
         response = self.http_post(
             f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
-            payload={"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True},
+            payload={"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True},
             timeout=60,
         )
         if response.get("ok") is False:
