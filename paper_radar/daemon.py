@@ -7,7 +7,12 @@ from typing import Any
 from ._time import default_since, local_now, now_utc_iso
 from .config import AppConfig
 from .db import PaperRadarDb
-from .digest import append_digest_batch, render_telegram_recap
+from .digest import (
+    append_digest_batch,
+    render_telegram_diff,
+    render_telegram_full,
+    render_telegram_recap,
+)
 from .extraction import PdfExtractor, process_pdf_with_cleanup
 from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, passes_quality_gate
 from .retrieval import PdfDownloader, make_default_retriever
@@ -150,6 +155,7 @@ class PaperRadarService:
                     error_count += 1
             if accepted_for_digest:
                 append_digest_batch(self.config.paths.digests, digest_date, batch_time, accepted_for_digest)
+            self.send_hourly_telegram(accepted_for_digest, digest_date, batch_time)
             self.db.set_state("last_successful_fetch_at", now_utc_iso())
             self.db.finish_run(run_id, "ok", found_count, accepted_count, error_count)
             return {"found_count": found_count, "accepted_count": accepted_count, "error_count": error_count}
@@ -174,10 +180,29 @@ class PaperRadarService:
             self.db.mark_recap(digest_date, "error", str(exc))
             raise
 
+    def send_hourly_telegram(
+        self,
+        accepted_batch: list[dict[str, Any]] | None,
+        digest_date: str,
+        batch_time: str,
+    ) -> None:
+        if not accepted_batch:
+            return
+        self.db.initialize()
+        last_sent = self.db.get_state("last_daily_full_sent_at")
+        if last_sent == digest_date:
+            message = render_telegram_diff(digest_date, batch_time, accepted_batch)
+            if message:
+                self.telegram.send_message(message)
+            return
+        papers = self.db.accepted_results_for_date(digest_date)
+        message = render_telegram_full(digest_date, papers)
+        if not message:
+            return
+        self.telegram.send_message(message)
+        self.db.set_state("last_daily_full_sent_at", digest_date)
+
     def watch(self) -> None:
         while True:
-            now = local_now(self.config.daemon.timezone)
             self.run_once()
-            if now.strftime("%H:%M") >= self.config.daemon.daily_recap_time:
-                self.send_daily_recap(now.strftime("%Y-%m-%d"))
             time.sleep(self.config.daemon.interval_minutes * 60)

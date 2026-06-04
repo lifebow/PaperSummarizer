@@ -76,16 +76,43 @@ def append_digest_batch(digest_dir: Path, digest_date: str, batch_time: str, pap
     return path
 
 
+def render_paper_short(paper: dict[str, Any]) -> str:
+    summary = paper.get("summary", {})
+    idea = (summary.get("ideas_to_try") or [""])[0]
+    link = paper.get("pdf_url") or f"https://arxiv.org/abs/{paper.get('arxiv_id', '')}"
+    why = summary.get("what_the_paper_does", "")
+    return f"{paper.get('title', 'Untitled')}\n{link}\n{why}\nIdea: {idea}"
+
+
+def render_telegram_full(digest_date: str, papers: list[dict[str, Any]], *, limit: int = 15) -> str:
+    if not papers:
+        return ""
+    shown = papers[:limit]
+    lines = [f"Paper Radar full {digest_date}: {len(papers)} paper(s) today."]
+    lines.extend(render_paper_short(p) for p in shown)
+    remaining = len(papers) - limit
+    if remaining > 0:
+        lines.append(f"... and {remaining} more")
+    return "\n".join(lines)
+
+
+def render_telegram_diff(digest_date: str, batch_time: str, papers: list[dict[str, Any]], *, limit: int = 15) -> str:
+    if not papers:
+        return ""
+    shown = papers[:limit]
+    lines = [f"Paper Radar +{len(papers)} {batch_time} {digest_date}:"]
+    lines.extend(render_paper_short(p) for p in shown)
+    remaining = len(papers) - limit
+    if remaining > 0:
+        lines.append(f"... and {remaining} more")
+    return "\n".join(lines)
+
+
 def render_telegram_recap(digest_date: str, papers: list[dict[str, Any]]) -> str:
     if not papers:
         return ""
     lines = [f"Paper Radar recap {digest_date}: {len(papers)} paper(s) kept."]
-    for paper in papers[:10]:
-        summary = paper.get("summary", {})
-        idea = (summary.get("ideas_to_try") or [""])[0]
-        link = paper.get("pdf_url") or f"https://arxiv.org/abs/{paper.get('arxiv_id', '')}"
-        why = summary.get("what_the_paper_does", "")
-        lines.append(f"\n{paper.get('title', 'Untitled')}\n{link}\n{why}\nIdea: {idea}")
+    lines.extend(render_paper_short(p) for p in papers[:10])
     return "\n".join(lines)
 
 

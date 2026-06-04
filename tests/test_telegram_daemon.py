@@ -81,6 +81,12 @@ class TelegramDaemonTests(unittest.TestCase):
                         "evidence_snippets": ["abstract"],
                     }
 
+            sent_messages = []
+            fake_telegram = type(
+                "FakeTelegram",
+                (),
+                {"send_message": lambda self, msg: sent_messages.append(msg)},
+            )()
             service = PaperRadarService(
                 config=config,
                 db=db,
@@ -88,6 +94,7 @@ class TelegramDaemonTests(unittest.TestCase):
                 downloader=FakeDownloader(),
                 extractor=FakeExtractor(),
                 llm=FakeLlm(),
+                telegram=fake_telegram,
             )
             result = service.run_once(now_date="2026-05-29", now_time="15:00")
 
@@ -131,6 +138,274 @@ class TelegramDaemonTests(unittest.TestCase):
         self.assertTrue(sent)
         self.assertTrue(was_sent)
         self.assertIn("Paper Radar recap", sent_messages[0])
+
+    def test_hourly_full_first_of_day_marks_state_and_sends_all(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            run_id = db.start_run()
+            accepted_batch = []
+            for arxiv_id, title in [("1", "Paper One"), ("2", "Paper Two")]:
+                paper_id = db.upsert_paper(
+                    {"arxiv_id": arxiv_id, "title": title, "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}"}
+                )
+                db.record_result(
+                    paper_id=paper_id,
+                    run_id=run_id,
+                    candidate_relevance_score=8,
+                    extractor_name="primary",
+                    extracted_text_chars=100,
+                    summary={"what_the_paper_does": f"work {arxiv_id}", "ideas_to_try": ["Try"]},
+                    relevance_score=8,
+                    grounding_score=8,
+                    idea_score=7,
+                    qa_reason="ok",
+                    accepted=True,
+                    digest_date="2026-06-03",
+                )
+                paper = db.get_paper_by_arxiv_id(arxiv_id)
+                paper["summary"] = {"what_the_paper_does": f"work {arxiv_id}", "ideas_to_try": ["Try"]}
+                accepted_batch.append(paper)
+
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                )(),
+            )
+
+            service.send_hourly_telegram(accepted_batch, "2026-06-03", "09:00")
+            state = db.get_state("last_daily_full_sent_at")
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("Paper Radar full 2026-06-03: 2 paper(s) today.", sent_messages[0])
+        self.assertIn("Paper One", sent_messages[0])
+        self.assertIn("Paper Two", sent_messages[0])
+        self.assertEqual(state, "2026-06-03")
+
+    def test_hourly_diff_after_full_sends_only_new_batch(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            run_id = db.start_run()
+            seeded = {}
+            for arxiv_id, title in [("a", "Paper A"), ("b", "Paper B"), ("c", "Paper C")]:
+                paper_id = db.upsert_paper(
+                    {"arxiv_id": arxiv_id, "title": title, "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}"}
+                )
+                db.record_result(
+                    paper_id=paper_id,
+                    run_id=run_id,
+                    candidate_relevance_score=8,
+                    extractor_name="primary",
+                    extracted_text_chars=100,
+                    summary={"what_the_paper_does": f"work {arxiv_id}", "ideas_to_try": ["Try"]},
+                    relevance_score=8,
+                    grounding_score=8,
+                    idea_score=7,
+                    qa_reason="ok",
+                    accepted=True,
+                    digest_date="2026-06-03",
+                )
+                paper = db.get_paper_by_arxiv_id(arxiv_id)
+                paper["summary"] = {"what_the_paper_does": f"work {arxiv_id}", "ideas_to_try": ["Try"]}
+                seeded[arxiv_id] = paper
+
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                )(),
+            )
+
+            first_batch = [seeded["a"], seeded["b"]]
+            service.send_hourly_telegram(first_batch, "2026-06-03", "09:00")
+            service.send_hourly_telegram([seeded["c"]], "2026-06-03", "10:00")
+            state = db.get_state("last_daily_full_sent_at")
+
+        self.assertEqual(len(sent_messages), 2)
+        self.assertIn("Paper Radar full 2026-06-03: 3 paper(s) today.", sent_messages[0])
+        self.assertIn("Paper A", sent_messages[0])
+        self.assertIn("Paper B", sent_messages[0])
+        self.assertIn("Paper Radar +1 10:00 2026-06-03", sent_messages[1])
+        self.assertIn("Paper C", sent_messages[1])
+        self.assertNotIn("Paper A", sent_messages[1])
+        self.assertNotIn("Paper B", sent_messages[1])
+        self.assertEqual(state, "2026-06-03")
+
+    def test_hourly_no_new_papers_silent(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                )(),
+            )
+
+            service.send_hourly_telegram([], "2026-06-03", "09:00")
+            service.send_hourly_telegram(None, "2026-06-03", "10:00")
+            state = db.get_state("last_daily_full_sent_at")
+
+        self.assertEqual(len(sent_messages), 0)
+        self.assertIsNone(state)
+
+    def test_hourly_full_again_on_new_day_after_state_rollover(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            run_id = db.start_run()
+            seeded: dict[str, dict] = {}
+            for arxiv_id, title, day in [("a", "Paper DayX", "2026-06-03"), ("b", "Paper DayY", "2026-06-04")]:
+                paper_id = db.upsert_paper(
+                    {"arxiv_id": arxiv_id, "title": title, "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}"}
+                )
+                db.record_result(
+                    paper_id=paper_id,
+                    run_id=run_id,
+                    candidate_relevance_score=8,
+                    extractor_name="primary",
+                    extracted_text_chars=100,
+                    summary={"what_the_paper_does": f"work {arxiv_id}", "ideas_to_try": ["Try"]},
+                    relevance_score=8,
+                    grounding_score=8,
+                    idea_score=7,
+                    qa_reason="ok",
+                    accepted=True,
+                    digest_date=day,
+                )
+                paper = db.get_paper_by_arxiv_id(arxiv_id)
+                paper["summary"] = {"what_the_paper_does": f"work {arxiv_id}", "ideas_to_try": ["Try"]}
+                seeded[arxiv_id] = paper
+
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                )(),
+            )
+
+            service.send_hourly_telegram([seeded["a"]], "2026-06-03", "09:00")
+            service.send_hourly_telegram([seeded["b"]], "2026-06-04", "09:00")
+            state = db.get_state("last_daily_full_sent_at")
+
+        self.assertEqual(len(sent_messages), 2)
+        self.assertIn("Paper Radar full 2026-06-03: 1 paper(s) today.", sent_messages[0])
+        self.assertIn("Paper DayX", sent_messages[0])
+        self.assertIn("Paper Radar full 2026-06-04: 1 paper(s) today.", sent_messages[1])
+        self.assertIn("Paper DayY", sent_messages[1])
+        self.assertEqual(state, "2026-06-04")
+
+    def test_hourly_full_truncates_when_many_papers(self):
+        sent_messages = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            run_id = db.start_run()
+            accepted_batch = []
+            for i in range(20):
+                arxiv_id = f"a{i}"
+                paper_id = db.upsert_paper(
+                    {"arxiv_id": arxiv_id, "title": f"Paper {i}", "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}"}
+                )
+                db.record_result(
+                    paper_id=paper_id,
+                    run_id=run_id,
+                    candidate_relevance_score=8,
+                    extractor_name="primary",
+                    extracted_text_chars=100,
+                    summary={"what_the_paper_does": f"work {i}", "ideas_to_try": ["Try"]},
+                    relevance_score=8,
+                    grounding_score=8,
+                    idea_score=7,
+                    qa_reason="ok",
+                    accepted=True,
+                    digest_date="2026-06-03",
+                )
+                paper = db.get_paper_by_arxiv_id(arxiv_id)
+                paper["summary"] = {"what_the_paper_does": f"work {i}", "ideas_to_try": ["Try"]}
+                accepted_batch.append(paper)
+
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": lambda self, msg: sent_messages.append(msg)},
+                )(),
+            )
+
+            service.send_hourly_telegram(accepted_batch, "2026-06-03", "09:00")
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertIn("Paper Radar full 2026-06-03: 20 paper(s) today.", sent_messages[0])
+        self.assertTrue(sent_messages[0].rstrip().endswith("... and 5 more"))
+
+    def test_hourly_telegram_failure_does_not_mark_state_sent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            run_id = db.start_run()
+            paper_id = db.upsert_paper({"arxiv_id": "1", "title": "Paper", "pdf_url": "https://arxiv.org/pdf/1"})
+            db.record_result(
+                paper_id=paper_id,
+                run_id=run_id,
+                candidate_relevance_score=8,
+                extractor_name="primary",
+                extracted_text_chars=100,
+                summary={"what_the_paper_does": "Does work", "ideas_to_try": ["Try"]},
+                relevance_score=8,
+                grounding_score=8,
+                idea_score=7,
+                qa_reason="ok",
+                accepted=True,
+                digest_date="2026-06-03",
+            )
+            paper = db.get_paper_by_arxiv_id("1")
+            paper["summary"] = {"what_the_paper_does": "Does work", "ideas_to_try": ["Try"]}
+
+            def raise_send(self, msg):
+                raise RuntimeError("Telegram is down")
+
+            service = PaperRadarService(
+                config=AppConfig(telegram=TelegramConfig(bot_token="bot", chat_id="chat")),
+                db=db,
+                telegram=type(
+                    "FakeTelegram",
+                    (),
+                    {"send_message": raise_send},
+                )(),
+            )
+
+            with self.assertRaises(RuntimeError):
+                service.send_hourly_telegram([paper], "2026-06-03", "09:00")
+            state = db.get_state("last_daily_full_sent_at")
+
+        self.assertIsNone(state)
 
 
 if __name__ == "__main__":
