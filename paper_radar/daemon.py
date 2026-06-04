@@ -106,66 +106,14 @@ class PaperRadarService:
                 limit=1000,
             )
             found_count = len(found_papers)
-            queued_count = 0
-            for paper in found_papers:
-                paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
-                record = paper.to_record()
-                record["archive_status"] = "queued"
-                self.db.upsert_paper(record)
-                queued_count += 1
-
-            processed_count = 0
-            while True:
-                if self.llm and not budget.can_call():
-                    logger.info(
-                        "Stopping queue drain: LLM budget exhausted (%d/%d)",
-                        budget.calls_used,
-                        budget.max_calls,
-                    )
-                    break
-
-                papers = self._queued_paper_metadata(limit=self.config.pipeline.max_papers_per_run)
-                if not papers:
-                    break
-                self._enrich_author_affiliations(papers)
-
-                new_papers: list[Any] = []
-                for paper in papers:
-                    paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
-                    new_papers.append(paper)
-
-                processed_count += len(new_papers)
-                logger.info(
-                    "Queued %d new papers; processing queued batch of %d papers (total this run: %d)",
-                    queued_count,
-                    len(new_papers),
-                    processed_count,
-                )
-
-                # --- Phase 1: Relevance scoring (parallel, cheap) ---
-                candidates = self._phase1_relevance(new_papers, budget)
-                logger.info(
-                    "Phase 1 done: %d/%d passed relevance (budget used: %d/%d)",
-                    len(candidates),
-                    len(new_papers),
-                    budget.calls_used,
-                    budget.max_calls,
-                )
-
-                # --- Phase 2: Summarize + QA (parallel, expensive) ---
-                phase2_results = self._phase2_summarize_qa(
-                    candidates,
-                    run_id,
-                    digest_date,
-                    batch_time,
-                    budget,
-                )
-                for result in phase2_results:
-                    if result.get("accepted"):
-                        accepted_count += 1
-                        accepted_for_digest.append(result)
-                    elif result.get("error"):
-                        error_count += 1
+            queued_count = self._enqueue_found_papers(found_papers)
+            phase2_results = self._drain_queue(run_id, digest_date, batch_time, budget, queued_count)
+            for result in phase2_results:
+                if result.get("accepted"):
+                    accepted_count += 1
+                    accepted_for_digest.append(result)
+                elif result.get("error"):
+                    error_count += 1
 
             # Sort deterministically before writing
             accepted_for_digest.sort(key=lambda p: p.get("arxiv_id", ""))
@@ -186,6 +134,65 @@ class PaperRadarService:
                 error_count + 1,
             )
             raise
+
+    def _enqueue_found_papers(self, found_papers: list[Any]) -> int:
+        queued_count = 0
+        for paper in found_papers:
+            paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
+            record = paper.to_record()
+            record["archive_status"] = "queued"
+            self.db.upsert_paper(record)
+            queued_count += 1
+        return queued_count
+
+    def _drain_queue(
+        self,
+        run_id: int,
+        digest_date: str,
+        batch_time: str,
+        budget: RunBudget,
+        queued_count: int,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        processed_count = 0
+        while True:
+            if self.llm and not budget.can_call():
+                logger.info(
+                    "Stopping queue drain: LLM budget exhausted (%d/%d)",
+                    budget.calls_used,
+                    budget.max_calls,
+                )
+                break
+
+            papers = self._queued_paper_metadata(limit=self.config.pipeline.max_papers_per_run)
+            if not papers:
+                break
+            self._enrich_author_affiliations(papers)
+
+            new_papers: list[Any] = []
+            for paper in papers:
+                paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
+                new_papers.append(paper)
+
+            processed_count += len(new_papers)
+            logger.info(
+                "Queued %d new papers; processing queued batch of %d papers (total this run: %d)",
+                queued_count,
+                len(new_papers),
+                processed_count,
+            )
+
+            candidates = self._phase1_relevance(new_papers, budget)
+            logger.info(
+                "Phase 1 done: %d/%d passed relevance (budget used: %d/%d)",
+                len(candidates),
+                len(new_papers),
+                budget.calls_used,
+                budget.max_calls,
+            )
+
+            results.extend(self._phase2_summarize_qa(candidates, run_id, digest_date, batch_time, budget))
+        return results
 
     def _queued_paper_metadata(self, *, limit: int) -> list[PaperMetadata]:
         papers: list[PaperMetadata] = []
