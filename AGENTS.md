@@ -182,9 +182,10 @@ Current verification: 42 tests pass, ruff check passes, ruff format passes.
 
 ### OpenCode Config (`opencode.json`)
 
-- `small_model`: `opencode/deepseek-v4-flash-free`
-- Subagent `lint`: model `opencode/deepseek-v4-flash-free`, edit deny
-- Subagent `implement`: model `acbpro/glm-5.1`, edit allow
+- `default_agent`: `coordinator` (primary orchestrator, model `z.ai/glm5.1`)
+- `small_model`: `z.ai/glm4.5-air`
+- Subagent `lint`: model `z.ai/glm4.5-air`, edit deny, bash allow
+- Subagent `implement`: model `z.ai/glm5.1`, edit allow, bash allow
 - Debate agents with fixed model mappings:
   - `debate-deepseek`: `opencode/deepseek-v4-flash-free`
   - `debate-mimo`: `opencode/mimo-v2.5-free`
@@ -192,6 +193,10 @@ Current verification: 42 tests pass, ruff check passes, ruff format passes.
   - `debate-glm`: `acbpro/glm-5.1`
   - `debate-gpt55`: `acbpro/gpt-5.5`
   - `debate-judge`: `acbpro/gpt-5.5`
+
+The `coordinator` agent is the default entry point for OpenCode sessions.
+It understands the full harness workflow and delegates to subagents.
+See its prompt in `opencode.json` for the complete orchestration rules.
 
 ### User-Selected Debate Models (2026-06-03)
 
