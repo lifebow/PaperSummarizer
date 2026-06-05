@@ -22,26 +22,31 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 _ENUM_MARKER = re.compile(r"\s*(?:\d+[.)]|[•‣])\s+")
+_LEADING_MARKER = re.compile(r"^\s*(?:\d+[.)]|[-•‣*])\s*")
+
+
+def _clean_idea(item: str) -> str:
+    return _LEADING_MARKER.sub("", item).strip()
 
 
 def normalize_ideas(value: Any) -> list[str]:
     """Render ``ideas_to_try`` as a list of items, whether it is a list or a
     string with numbered / bulleted / semicolon-separated content."""
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
+        return [cleaned for item in value if (cleaned := _clean_idea(str(item)))]
     if not isinstance(value, str):
         return []
     text = value.strip()
     if not text:
         return []
-    parts = [p.strip() for p in _ENUM_MARKER.split(text) if p.strip()]
+    parts = [_clean_idea(p) for p in _ENUM_MARKER.split(text) if p.strip()]
     if len(parts) > 1:
         return parts
     if ";" in text:
-        semi = [p.strip() for p in text.split(";") if p.strip()]
+        semi = [_clean_idea(p) for p in text.split(";") if p.strip()]
         if len(semi) > 1:
             return semi
-    return [text]
+    return [_clean_idea(text)]
 
 
 def _href(date: str | None, slugs: list[str]) -> str:

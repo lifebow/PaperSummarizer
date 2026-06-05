@@ -69,6 +69,12 @@ class NormalizeIdeasTests(unittest.TestCase):
     def test_plain_sentence_stays_single_item(self):
         self.assertEqual(self.normalize("Just one idea here"), ["Just one idea here"])
 
+    def test_strips_leading_dash_marker_from_items(self):
+        self.assertEqual(self.normalize("- Replace policy; - Add tests"), ["Replace policy", "Add tests"])
+
+    def test_does_not_split_on_intra_sentence_hyphen(self):
+        self.assertEqual(self.normalize("Apply role-relabeling to agents"), ["Apply role-relabeling to agents"])
+
     def test_empty_and_none(self):
         self.assertEqual(self.normalize(""), [])
         self.assertEqual(self.normalize(None), [])
