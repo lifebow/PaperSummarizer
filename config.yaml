@@ -1,19 +1,28 @@
 topics:
   categories: ["cs.AI", "cs.CL", "cs.CR", "cs.PF", "cs.SE", "cs.CV"]
-  queries:
-    - "AI safety"
-    - "AI alignment"
-    - "LLM safety"
-    - "LLM jailbreak"
-    - "jailbreak attack"
-    - "prompt injection"
-    - "prompt attack"
-    - "red teaming"
-    - "adversarial prompts"
-    - "safety guardrails"
-    - "model robustness"
-    - "harmful content mitigation"
-    - "constitutional AI"
+  # Named filter sets. The web UI filters by set (tier 1) then by keyword
+  # (tier 2). Acceptance uses the union of all sets' queries. Add a new set
+  # (e.g. Computer Vision) here — no code change needed; matching papers start
+  # appearing from the next scan onward.
+  filters:
+    AI Safety:
+      - "AI safety"
+      - "AI alignment"
+      - "LLM safety"
+      - "LLM jailbreak"
+      - "jailbreak attack"
+      - "prompt injection"
+      - "prompt attack"
+      - "red teaming"
+      - "adversarial prompts"
+      - "safety guardrails"
+      - "model robustness"
+      - "harmful content mitigation"
+      - "constitutional AI"
+    # Computer Vision:
+    #   - "object detection"
+    #   - "image segmentation"
+    #   - "diffusion model"
 
 daemon:
   interval_minutes: 60

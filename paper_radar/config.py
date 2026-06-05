@@ -7,9 +7,35 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class FilterSet:
+    name: str
+    queries: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class TopicConfig:
     categories: list[str] = field(default_factory=lambda: ["cs.AI"])
     queries: list[str] = field(default_factory=list)
+    filters: list[FilterSet] = field(default_factory=list)
+
+
+def _build_filter_sets(topics: dict[str, Any]) -> tuple[list[FilterSet], list[str]]:
+    """Return (filter_sets, union_queries). Supports the named-set format
+    (``topics.filters`` as a name -> queries map) and falls back to wrapping a
+    flat ``topics.queries`` list into a single "AI Safety" set."""
+    raw_filters = topics.get("filters")
+    if isinstance(raw_filters, dict) and raw_filters:
+        sets = [FilterSet(str(name), [str(q) for q in (queries or [])]) for name, queries in raw_filters.items()]
+    else:
+        flat = [str(q) for q in topics.get("queries", [])]
+        sets = [FilterSet("AI Safety", flat)] if flat else []
+
+    union: list[str] = []
+    for fset in sets:
+        for query in fset.queries:
+            if query not in union:
+                union.append(query)
+    return sets, union
 
 
 @dataclass(frozen=True)
@@ -98,6 +124,7 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
     raw = _parse_simple_yaml(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
 
     topics = raw.get("topics", {})
+    _topic_filters, _topic_union = _build_filter_sets(topics)
     daemon = raw.get("daemon", {})
     filters = raw.get("filters", {})
     paths = raw.get("paths", {})
@@ -126,7 +153,8 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
     return AppConfig(
         topics=TopicConfig(
             categories=list(topics.get("categories", ["cs.AI"])),
-            queries=list(topics.get("queries", [])),
+            queries=_topic_union,
+            filters=_topic_filters,
         ),
         daemon=DaemonConfig(
             interval_minutes=int(daemon.get("interval_minutes", 60)),

@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from .db import PaperRadarDb
-from .topics import OTHER_TOPIC, tag_paper, topic_slug
+from .topics import OTHER_TOPIC, paper_filter_sets, tag_paper, topic_slug
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -49,60 +49,105 @@ def normalize_ideas(value: Any) -> list[str]:
     return [_clean_idea(text)]
 
 
-def _href(date: str | None, slugs: list[str]) -> str:
+def _href(date: str | None, set_slug: str | None, kw_slugs: list[str]) -> str:
     params: dict[str, str] = {}
     if date:
         params["date"] = date
-    if slugs:
-        params["topics"] = ",".join(slugs)
+    if set_slug:
+        params["set"] = set_slug
+    if kw_slugs:
+        params["topics"] = ",".join(kw_slugs)
     return "/?" + urlencode(params) if params else "/"
 
 
-def create_app(db: PaperRadarDb, queries: list[str]) -> FastAPI:
+def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
     app = FastAPI(title="PaperSummarizer")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-    topic_catalog = [(q, topic_slug(q)) for q in queries] + [(OTHER_TOPIC, topic_slug(OTHER_TOPIC))]
-    known_slugs = {slug for _, slug in topic_catalog}
+    # union of all sets' queries (dedup, order preserved) — used for keyword tags
+    union_queries: list[str] = []
+    for fset in filter_sets:
+        for query in fset.queries:
+            if query not in union_queries:
+                union_queries.append(query)
+    known_kw_slugs = {topic_slug(q) for q in union_queries}
+
+    set_by_slug = {topic_slug(fset.name): fset for fset in filter_sets}
 
     @app.get("/", response_class=HTMLResponse)
-    def home(request: Request, date: str | None = None, topics: str | None = None) -> Any:
+    def home(
+        request: Request,
+        date: str | None = None,
+        set_filter: str | None = Query(None, alias="set"),
+        topics: str | None = None,
+    ) -> Any:
         dates = db.dates_with_accepted_results()
         available = [d for d, _ in dates]
         selected_date = date or (available[0] if available else None)
 
-        selected_slugs = [s for s in (topics.split(",") if topics else []) if s in known_slugs]
+        # tier 1: one concrete set, or "other", or None (= All)
+        selected_set = set_filter if (set_filter in set_by_slug or set_filter == "other") else None
+        # tier 2: keyword slugs (only meaningful inside a concrete set, but filter applies if present)
+        selected_kw = [s for s in (topics.split(",") if topics else []) if s in known_kw_slugs]
 
         papers = db.accepted_results_for_date(selected_date) if selected_date else []
         for paper in papers:
             summary = paper.get("summary") or {}
-            paper["topics"] = [(label, topic_slug(label)) for label in tag_paper(paper, queries)]
+            paper["topics"] = [(label, topic_slug(label)) for label in tag_paper(paper, union_queries)]
             paper["ideas"] = normalize_ideas(summary.get("ideas_to_try"))
             affs = paper.get("author_affiliations") or summary.get("author_affiliations") or []
             paper["affiliations"] = list(dict.fromkeys(a for a in affs if a))
+            paper["_set_slugs"] = {topic_slug(name) for name in paper_filter_sets(paper, filter_sets)}
 
-        if selected_slugs:
-            chosen = set(selected_slugs)
+        if selected_set == "other":
+            papers = [p for p in papers if not p["_set_slugs"]]
+        elif selected_set:
+            papers = [p for p in papers if selected_set in p["_set_slugs"]]
+        if selected_kw:
+            chosen = set(selected_kw)
             papers = [p for p in papers if any(slug in chosen for _, slug in p["topics"])]
 
-        topic_links = [
+        set_links = [{"label": "Tất cả", "active": selected_set is None, "href": _href(selected_date, None, [])}]
+        for fset in filter_sets:
+            slug = topic_slug(fset.name)
+            set_links.append(
+                {
+                    "label": fset.name,
+                    "active": selected_set == slug,
+                    "href": _href(selected_date, None if selected_set == slug else slug, []),
+                }
+            )
+        set_links.append(
             {
-                "label": label,
-                "slug": slug,
-                "active": slug in selected_slugs,
-                "href": _href(
-                    selected_date,
-                    [s for s in selected_slugs if s != slug] if slug in selected_slugs else [*selected_slugs, slug],
-                ),
+                "label": OTHER_TOPIC,
+                "active": selected_set == "other",
+                "href": _href(selected_date, None if selected_set == "other" else "other", []),
             }
-            for label, slug in topic_catalog
-        ]
+        )
+
+        keyword_links = []
+        if selected_set and selected_set in set_by_slug:
+            for query in set_by_slug[selected_set].queries:
+                slug = topic_slug(query)
+                keyword_links.append(
+                    {
+                        "label": query,
+                        "slug": slug,
+                        "active": slug in selected_kw,
+                        "href": _href(
+                            selected_date,
+                            selected_set,
+                            [s for s in selected_kw if s != slug] if slug in selected_kw else [*selected_kw, slug],
+                        ),
+                    }
+                )
+
         date_links = [
             {
                 "date": d,
                 "count": n,
                 "active": d == selected_date,
-                "href": _href(d, selected_slugs),
+                "href": _href(d, selected_set, selected_kw),
             }
             for d, n in dates
         ]
@@ -113,9 +158,8 @@ def create_app(db: PaperRadarDb, queries: list[str]) -> FastAPI:
             {
                 "date_links": date_links,
                 "selected_date": selected_date,
-                "topic_links": topic_links,
-                "all_active": not selected_slugs,
-                "all_href": _href(selected_date, []),
+                "set_links": set_links,
+                "keyword_links": keyword_links,
                 "papers": papers,
             },
         )

@@ -39,10 +39,26 @@ def _seed_accepted(db: PaperRadarDb, arxiv_id: str, title: str, digest_date: str
 
 
 def _client(db, queries):
+    """Single-set client (backward-compatible helper for keyword-level tests)."""
+    from paper_radar.config import FilterSet
+
+    return _client_sets(db, [FilterSet("AI Safety", queries)])
+
+
+def _client_sets(db, filter_sets):
     from fastapi.testclient import TestClient
     from paper_radar.web import create_app
 
-    return TestClient(create_app(db, queries))
+    return TestClient(create_app(db, filter_sets))
+
+
+def _two_sets():
+    from paper_radar.config import FilterSet
+
+    return [
+        FilterSet("AI Safety", ["jailbreak", "prompt injection"]),
+        FilterSet("Computer Vision", ["object detection", "segmentation"]),
+    ]
 
 
 class NormalizeIdeasTests(unittest.TestCase):
@@ -124,7 +140,7 @@ class WebRouteTests(unittest.TestCase):
             db.initialize()
             _seed_accepted(db, "2606.00001", "A jailbreak study", "2026-06-05")
             _seed_accepted(db, "2606.00002", "Quantum error correction", "2026-06-05")
-            resp = _client(db, ["jailbreak"]).get("/", params={"topics": "other"})
+            resp = _client(db, ["jailbreak"]).get("/", params={"set": "other"})
         self.assertIn("Quantum error correction", resp.text)
         self.assertNotIn("A jailbreak study", resp.text)
 
@@ -181,6 +197,63 @@ class WebRouteTests(unittest.TestCase):
             resp = _client(db, ["ai safety"]).get("/", params={"topics": "bogus-slug"})
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Newest Paper", resp.text)
+
+
+class FilterSetRouteTests(unittest.TestCase):
+    def _seed_two(self, db):
+        _seed_accepted(db, "2606.01001", "A jailbreak prompt injection study", "2026-06-06")
+        _seed_accepted(db, "2606.01002", "Real-time object detection model", "2026-06-06")
+        _seed_accepted(db, "2606.01003", "Quantum error correction codes", "2026-06-06")
+
+    def test_set_filter_keeps_only_papers_in_that_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            self._seed_two(db)
+            resp = _client_sets(db, _two_sets()).get("/", params={"set": "computer-vision"})
+        self.assertIn("Real-time object detection model", resp.text)
+        self.assertNotIn("A jailbreak prompt injection study", resp.text)
+        self.assertNotIn("Quantum error correction codes", resp.text)
+
+    def test_other_set_keeps_papers_matching_no_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            self._seed_two(db)
+            resp = _client_sets(db, _two_sets()).get("/", params={"set": "other"})
+        self.assertIn("Quantum error correction codes", resp.text)
+        self.assertNotIn("Real-time object detection model", resp.text)
+
+    def test_set_plus_keyword_intersection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            _seed_accepted(db, "2606.01001", "A jailbreak study", "2026-06-06")
+            _seed_accepted(db, "2606.01004", "A prompt injection attack", "2026-06-06")
+            resp = _client_sets(db, _two_sets()).get("/", params={"set": "ai-safety", "topics": "jailbreak"})
+        self.assertIn("A jailbreak study", resp.text)
+        self.assertNotIn("A prompt injection attack", resp.text)
+
+    def test_tier2_keyword_chips_shown_only_when_set_selected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            self._seed_two(db)
+            client = _client_sets(db, _two_sets())
+            all_view = client.get("/").text
+            set_view = client.get("/", params={"set": "computer-vision"}).text
+        # tier-2 chip for a CV keyword only appears once a CV set is selected
+        self.assertNotIn("object-detection", all_view)
+        self.assertIn("object-detection", set_view)
+
+    def test_unknown_set_slug_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            self._seed_two(db)
+            resp = _client_sets(db, _two_sets()).get("/", params={"set": "bogus"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Real-time object detection model", resp.text)
 
 
 class DatesWithAcceptedResultsTests(unittest.TestCase):

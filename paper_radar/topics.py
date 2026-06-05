@@ -41,3 +41,10 @@ def tag_paper(paper: dict[str, Any], queries: list[str]) -> list[str]:
     haystack = _searchable_text(paper)
     matched = [query for query in queries if query.lower() in haystack]
     return matched or [OTHER_TOPIC]
+
+
+def paper_filter_sets(paper: dict[str, Any], filter_sets: list[Any]) -> list[str]:
+    """Return the names of filter sets the paper matches (a set matches if any
+    of its queries appear in the paper's text), in declaration order."""
+    haystack = _searchable_text(paper)
+    return [fset.name for fset in filter_sets if any(q.lower() in haystack for q in fset.queries)]

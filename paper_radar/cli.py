@@ -224,7 +224,7 @@ def _handle_serve_web(args: argparse.Namespace) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config = load_config(args.config, args.env)
     db = _get_db(args)
-    app = create_app(db, config.topics.queries)
+    app = create_app(db, config.topics.filters)
     logger.info("Serving web UI on http://%s:%d", args.host, args.port)
     uvicorn.run(app, host=args.host, port=args.port)
 
