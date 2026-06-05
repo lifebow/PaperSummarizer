@@ -127,7 +127,11 @@
           </dl>
         </details>
 
-        <div class="mt-3.5 flex gap-4 text-[13px]">
+        <div class="mt-4 flex items-center gap-3 text-[13px]">
+          <a href="{{ p.reader_url }}" target="_blank" rel="noopener"
+             class="inline-flex items-center gap-1.5 rounded-lg bg-orange-500 px-3 py-1.5 font-medium text-white transition hover:bg-orange-600">
+            📖 Read PDF
+          </a>
           <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-orange-600 dark:hover:text-orange-400">arXiv</a>
           {% if p.pdf_url %}<a href="{{ p.pdf_url }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-orange-600 dark:hover:text-orange-400">PDF</a>{% endif %}
         </div>

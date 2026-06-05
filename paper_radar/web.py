@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse
@@ -95,6 +95,8 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
             affs = paper.get("author_affiliations") or summary.get("author_affiliations") or []
             paper["affiliations"] = list(dict.fromkeys(a for a in affs if a))
             paper["_set_slugs"] = {topic_slug(name) for name in paper_filter_sets(paper, filter_sets)}
+            pdf_url = paper.get("pdf_url") or f"https://arxiv.org/pdf/{paper.get('arxiv_id', '')}.pdf"
+            paper["reader_url"] = "https://pdf.lifebow.net/?url=" + quote(pdf_url, safe="")
 
         if selected_set == "other":
             papers = [p for p in papers if not p["_set_slugs"]]

@@ -169,6 +169,60 @@ class WebRouteTests(unittest.TestCase):
         self.assertEqual(resp.text.count("<li>Second idea here</li>"), 1)
         self.assertEqual(resp.text.count("<li>Third idea here</li>"), 1)
 
+    def test_read_pdf_button_links_to_external_viewer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            _seed_accepted(db, "2606.00002", "Newest Paper", "2026-06-05")
+            resp = _client(db, ["ai safety"]).get("/")
+        self.assertIn("Read PDF", resp.text)
+        self.assertIn(
+            "https://pdf.lifebow.net/?url=https%3A%2F%2Farxiv.org%2Fpdf%2F2606.00002.pdf",
+            resp.text,
+        )
+        # original arXiv + PDF links are kept
+        self.assertIn("https://arxiv.org/pdf/2606.00002.pdf", resp.text)
+        self.assertIn("https://arxiv.org/abs/2606.00002", resp.text)
+
+    def test_read_pdf_falls_back_to_arxiv_id_when_pdf_url_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            paper_id = db.upsert_paper(
+                PaperMetadata(
+                    arxiv_id="2606.00077",
+                    title="No PDF URL paper",
+                    abstract="a",
+                    authors=["A"],
+                    categories=["cs.AI"],
+                    primary_category="cs.AI",
+                    published_at="2026-06-05",
+                    pdf_url="",
+                    source="arxiv",
+                ).to_record()
+            )
+            db.update_paper_archive_status("2606.00077", "accepted")
+            run_id = db.start_run()
+            db.record_result(
+                paper_id=paper_id,
+                run_id=run_id,
+                candidate_relevance_score=8,
+                extractor_name="t",
+                extracted_text_chars=10,
+                summary={"what_the_paper_does": "x"},
+                relevance_score=8,
+                grounding_score=8,
+                idea_score=7,
+                qa_reason="ok",
+                accepted=True,
+                digest_date="2026-06-05",
+            )
+            resp = _client(db, ["ai safety"]).get("/")
+        self.assertIn(
+            "https://pdf.lifebow.net/?url=https%3A%2F%2Farxiv.org%2Fpdf%2F2606.00077.pdf",
+            resp.text,
+        )
+
     def test_affiliations_from_summary_are_shown(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
