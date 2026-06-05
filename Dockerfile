@@ -15,7 +15,10 @@ RUN pip install --no-cache-dir \
     "requests>=2.31" \
     "paperscraper>=0.2" \
     "pymupdf4llm>=0.0.17" \
-    "pdfplumber>=0.11"
+    "pdfplumber>=0.11" \
+    "fastapi>=0.110" \
+    "jinja2>=3.1" \
+    "uvicorn>=0.27"
 
 COPY --from=builder /build/dist/*.whl /tmp/
 RUN pip install --no-cache-dir --no-deps /tmp/*.whl && rm /tmp/*.whl

@@ -8,6 +8,9 @@ dependencies = [
   "paperscraper>=0.2",
   "pymupdf4llm>=0.0.17",
   "pdfplumber>=0.11",
+  "fastapi>=0.110",
+  "jinja2>=3.1",
+  "uvicorn>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +23,9 @@ paper-radar = "paper_radar.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["paper_radar*"]
+
+[tool.setuptools.package-data]
+paper_radar = ["templates/*.html"]
 
 [tool.ruff]
 target-version = "py310"

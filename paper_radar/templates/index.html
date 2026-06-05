@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}PaperSummarizer{% if selected_date %} · {{ selected_date }}{% endif %}{% endblock %}
+
+{% block content %}
+<header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-10">
+  <div class="max-w-6xl mx-auto px-4 py-4">
+    <div class="flex items-baseline gap-3">
+      <h1 class="text-xl font-bold text-white">PaperSummarizer</h1>
+      <span class="text-sm text-slate-400">AI safety &amp; LLM red-teaming feed</span>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-2">
+      <a href="{{ all_href }}"
+         class="px-3 py-1 rounded-full text-sm border transition
+                {% if all_active %}bg-sky-500 border-sky-400 text-white{% else %}border-slate-700 text-slate-300 hover:border-slate-500{% endif %}">
+        Tất cả
+      </a>
+      {% for t in topic_links %}
+      <a href="{{ t.href }}"
+         class="px-3 py-1 rounded-full text-sm border transition
+                {% if t.active %}bg-sky-500 border-sky-400 text-white{% else %}border-slate-700 text-slate-300 hover:border-slate-500{% endif %}">
+        {{ t.label }}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</header>
+
+<div class="max-w-6xl mx-auto px-4 py-6 flex gap-6">
+  <aside class="w-44 shrink-0 hidden sm:block">
+    <h2 class="text-xs uppercase tracking-wide text-slate-500 mb-2">Ngày</h2>
+    <nav class="space-y-1">
+      {% for d in date_links %}
+      <a href="{{ d.href }}"
+         class="flex items-center justify-between px-2 py-1.5 rounded text-sm transition
+                {% if d.active %}bg-slate-800 text-white{% else %}text-slate-400 hover:bg-slate-900{% endif %}">
+        <span>{{ d.date }}</span>
+        <span class="text-xs px-1.5 rounded-full bg-slate-700/70 text-slate-300">{{ d.count }}</span>
+      </a>
+      {% else %}
+      <p class="text-sm text-slate-600">Chưa có dữ liệu</p>
+      {% endfor %}
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 space-y-4">
+    {% if papers %}
+      <p class="text-sm text-slate-500">{{ papers|length }} paper · {{ selected_date }}</p>
+      {% for p in papers %}
+      <article class="rounded-xl border border-slate-800 bg-slate-900/50 p-5">
+        <div class="flex items-start justify-between gap-4">
+          <h3 class="text-lg font-semibold text-white leading-snug">
+            <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener"
+               class="hover:text-sky-400">{{ p.title }}</a>
+          </h3>
+          <div class="flex gap-2 shrink-0 text-xs">
+            <span class="px-2 py-1 rounded bg-slate-800 text-slate-300" title="relevance">R {{ "%.0f"|format(p.relevance_score) }}</span>
+            <span class="px-2 py-1 rounded bg-slate-800 text-slate-300" title="idea">I {{ "%.0f"|format(p.idea_score) }}</span>
+            <span class="px-2 py-1 rounded bg-slate-800 text-slate-300" title="grounding">G {{ "%.0f"|format(p.grounding_score) }}</span>
+          </div>
+        </div>
+
+        {% if p.authors %}
+        <p class="mt-1 text-sm text-slate-400 truncate">{{ p.authors|join(", ") }}</p>
+        {% endif %}
+
+        <div class="mt-2 flex flex-wrap gap-1.5">
+          {% for label, slug in p.topics %}
+          <span class="px-2 py-0.5 rounded-full text-xs bg-sky-500/15 text-sky-300 border border-sky-500/30">{{ label }}</span>
+          {% endfor %}
+        </div>
+
+        {% set s = p.summary %}
+        {% if s.what_the_paper_does %}
+        <p class="mt-3 text-sm text-slate-300 leading-relaxed">{{ s.what_the_paper_does }}</p>
+        {% endif %}
+
+        <details class="mt-3 group">
+          <summary class="cursor-pointer text-sm text-sky-400 hover:text-sky-300 select-none">Chi tiết</summary>
+          <dl class="mt-2 space-y-2 text-sm">
+            {% for field, heading in [
+                ("novelty", "Điểm mới"),
+                ("method", "Phương pháp"),
+                ("results_claims", "Kết quả"),
+                ("limitations_uncertainty", "Hạn chế")] %}
+              {% if s[field] %}
+              <div>
+                <dt class="text-slate-500">{{ heading }}</dt>
+                <dd class="text-slate-300">{{ s[field] }}</dd>
+              </div>
+              {% endif %}
+            {% endfor %}
+            {% if s.ideas_to_try %}
+            <div>
+              <dt class="text-slate-500">Ý tưởng thử</dt>
+              <dd><ul class="list-disc list-inside text-slate-300">
+                {% for idea in s.ideas_to_try %}<li>{{ idea }}</li>{% endfor %}
+              </ul></dd>
+            </div>
+            {% endif %}
+          </dl>
+        </details>
+
+        <div class="mt-3 flex gap-3 text-sm">
+          <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener" class="text-slate-400 hover:text-sky-400">arXiv</a>
+          {% if p.pdf_url %}<a href="{{ p.pdf_url }}" target="_blank" rel="noopener" class="text-slate-400 hover:text-sky-400">PDF</a>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    {% else %}
+      <div class="rounded-xl border border-dashed border-slate-800 p-12 text-center text-slate-500">
+        Không có paper nào{% if selected_date %} cho ngày {{ selected_date }}{% endif %}.
+      </div>
+    {% endif %}
+  </main>
+</div>
+{% endblock %}
