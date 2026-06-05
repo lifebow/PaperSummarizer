@@ -13,7 +13,7 @@
       {% for s in set_links %}
       <a href="{{ s.href }}"
          class="rounded-full px-3.5 py-1.5 text-[13px] font-medium transition
-                {% if s.active %}bg-indigo-500 text-white shadow-sm shadow-indigo-500/30{% else %}bg-zinc-900 text-zinc-400 ring-1 ring-inset ring-zinc-800 hover:text-zinc-200 hover:ring-zinc-700{% endif %}">
+                {% if s.active %}bg-orange-500 text-white shadow-sm shadow-orange-500/30{% else %}bg-zinc-900 text-zinc-400 ring-1 ring-inset ring-zinc-800 hover:text-zinc-200 hover:ring-zinc-700{% endif %}">
         {{ s.label }}
       </a>
       {% endfor %}
@@ -24,7 +24,7 @@
       {% for k in keyword_links %}
       <a href="{{ k.href }}" data-kw="{{ k.slug }}"
          class="rounded-md px-2.5 py-1 text-xs transition
-                {% if k.active %}bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-500/40{% else %}text-zinc-500 ring-1 ring-inset ring-zinc-800/80 hover:text-zinc-300 hover:ring-zinc-700{% endif %}">
+                {% if k.active %}bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-500/40{% else %}text-zinc-500 ring-1 ring-inset ring-zinc-800/80 hover:text-zinc-300 hover:ring-zinc-700{% endif %}">
         {{ k.label }}
       </a>
       {% endfor %}
@@ -59,7 +59,7 @@
         <div class="flex items-start justify-between gap-4">
           <h3 class="text-[15px] font-semibold leading-snug text-zinc-100 sm:text-base">
             <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener"
-               class="transition hover:text-indigo-400">{{ p.title }}</a>
+               class="transition hover:text-orange-400">{{ p.title }}</a>
           </h3>
           <div class="flex shrink-0 gap-1.5 text-[11px] font-medium">
             <span class="rounded-md bg-zinc-800 px-2 py-1 text-zinc-400" title="relevance">Rel {{ "%.0f"|format(p.relevance_score) }}</span>
@@ -82,7 +82,7 @@
 
         <div class="mt-3 flex flex-wrap gap-1.5">
           {% for label, slug in p.topics %}
-          <span class="rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-500/25">{{ label }}</span>
+          <span class="rounded-full bg-orange-500/10 px-2.5 py-0.5 text-[11px] font-medium text-orange-300 ring-1 ring-inset ring-orange-500/25">{{ label }}</span>
           {% endfor %}
         </div>
 
@@ -92,7 +92,7 @@
         {% endif %}
 
         <details class="mt-3 group">
-          <summary class="inline-flex cursor-pointer select-none items-center gap-1 text-[13px] font-medium text-indigo-400 transition hover:text-indigo-300">
+          <summary class="inline-flex cursor-pointer select-none items-center gap-1 text-[13px] font-medium text-orange-400 transition hover:text-orange-300">
             <span class="transition group-open:rotate-90">›</span> Details
           </summary>
           <dl class="mt-3 space-y-3 border-l border-zinc-800 pl-4 text-sm">
@@ -122,8 +122,8 @@
         </details>
 
         <div class="mt-3.5 flex gap-4 text-[13px]">
-          <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-indigo-400">arXiv</a>
-          {% if p.pdf_url %}<a href="{{ p.pdf_url }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-indigo-400">PDF</a>{% endif %}
+          <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-orange-400">arXiv</a>
+          {% if p.pdf_url %}<a href="{{ p.pdf_url }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-orange-400">PDF</a>{% endif %}
         </div>
       </article>
       {% endfor %}
