@@ -45,6 +45,40 @@ def _client(db, queries):
     return TestClient(create_app(db, queries))
 
 
+class NormalizeIdeasTests(unittest.TestCase):
+    def setUp(self):
+        from paper_radar.web import normalize_ideas
+
+        self.normalize = normalize_ideas
+
+    def test_list_passes_through_stripped(self):
+        self.assertEqual(self.normalize(["a", " b "]), ["a", "b"])
+
+    def test_numbered_string_splits_into_items(self):
+        self.assertEqual(self.normalize("1. Alpha 2. Beta 3. Gamma"), ["Alpha", "Beta", "Gamma"])
+
+    def test_paren_numbered_string_splits(self):
+        self.assertEqual(self.normalize("1) Alpha 2) Beta"), ["Alpha", "Beta"])
+
+    def test_bullet_string_splits(self):
+        self.assertEqual(self.normalize("• Alpha • Beta"), ["Alpha", "Beta"])
+
+    def test_semicolon_list_splits_when_no_enumeration(self):
+        self.assertEqual(self.normalize("apply X; automate Y; combine Z"), ["apply X", "automate Y", "combine Z"])
+
+    def test_plain_sentence_stays_single_item(self):
+        self.assertEqual(self.normalize("Just one idea here"), ["Just one idea here"])
+
+    def test_empty_and_none(self):
+        self.assertEqual(self.normalize(""), [])
+        self.assertEqual(self.normalize(None), [])
+
+    def test_does_not_split_into_characters(self):
+        # regression: a string must never become one item per character
+        result = self.normalize("1. Alpha 2. Beta")
+        self.assertTrue(all(len(item) > 1 for item in result))
+
+
 class WebRouteTests(unittest.TestCase):
     def test_home_shows_latest_day_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -96,6 +130,22 @@ class WebRouteTests(unittest.TestCase):
             resp = _client(db, ["ai safety"]).get("/", params={"date": "2099-01-01"})
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Không có paper", resp.text)
+
+    def test_string_ideas_render_as_discrete_list_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            _seed_accepted(
+                db,
+                "2606.00009",
+                "Paper with string ideas",
+                "2026-06-05",
+                summary={"ideas_to_try": "1. First idea here 2. Second idea here 3. Third idea here"},
+            )
+            resp = _client(db, ["ai safety"]).get("/")
+        self.assertEqual(resp.text.count("<li>First idea here</li>"), 1)
+        self.assertEqual(resp.text.count("<li>Second idea here</li>"), 1)
+        self.assertEqual(resp.text.count("<li>Third idea here</li>"), 1)
 
     def test_unknown_topic_slug_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:

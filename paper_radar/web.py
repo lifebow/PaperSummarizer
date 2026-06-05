@@ -6,6 +6,7 @@ the configured ``topics.queries`` (see :mod:`paper_radar.topics`).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -18,6 +19,29 @@ from .db import PaperRadarDb
 from .topics import OTHER_TOPIC, tag_paper, topic_slug
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+_ENUM_MARKER = re.compile(r"\s*(?:\d+[.)]|[•‣])\s+")
+
+
+def normalize_ideas(value: Any) -> list[str]:
+    """Render ``ideas_to_try`` as a list of items, whether it is a list or a
+    string with numbered / bulleted / semicolon-separated content."""
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if not isinstance(value, str):
+        return []
+    text = value.strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in _ENUM_MARKER.split(text) if p.strip()]
+    if len(parts) > 1:
+        return parts
+    if ";" in text:
+        semi = [p.strip() for p in text.split(";") if p.strip()]
+        if len(semi) > 1:
+            return semi
+    return [text]
 
 
 def _href(date: str | None, slugs: list[str]) -> str:
@@ -47,6 +71,7 @@ def create_app(db: PaperRadarDb, queries: list[str]) -> FastAPI:
         papers = db.accepted_results_for_date(selected_date) if selected_date else []
         for paper in papers:
             paper["topics"] = [(label, topic_slug(label)) for label in tag_paper(paper, queries)]
+            paper["ideas"] = normalize_ideas((paper.get("summary") or {}).get("ideas_to_try"))
 
         if selected_slugs:
             chosen = set(selected_slugs)

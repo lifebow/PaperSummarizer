@@ -89,11 +89,11 @@
               </div>
               {% endif %}
             {% endfor %}
-            {% if s.ideas_to_try %}
+            {% if p.ideas %}
             <div>
               <dt class="text-slate-500">Ý tưởng thử</dt>
-              <dd><ul class="list-disc list-inside text-slate-300">
-                {% for idea in s.ideas_to_try %}<li>{{ idea }}</li>{% endfor %}
+              <dd><ul class="list-disc list-inside space-y-1 text-slate-300">
+                {% for idea in p.ideas %}<li>{{ idea }}</li>{% endfor %}
               </ul></dd>
             </div>
             {% endif %}
