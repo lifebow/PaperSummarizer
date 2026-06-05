@@ -153,6 +153,26 @@ class WebRouteTests(unittest.TestCase):
         self.assertEqual(resp.text.count("<li>Second idea here</li>"), 1)
         self.assertEqual(resp.text.count("<li>Third idea here</li>"), 1)
 
+    def test_affiliations_from_summary_are_shown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            _seed_accepted(
+                db,
+                "2606.00010",
+                "Paper with affiliations",
+                "2026-06-05",
+                summary={
+                    "what_the_paper_does": "x",
+                    "author_affiliations": ["KAIST AI", "KAIST AI", "EPFL"],
+                },
+            )
+            resp = _client(db, ["ai safety"]).get("/")
+        self.assertIn("KAIST AI", resp.text)
+        self.assertIn("EPFL", resp.text)
+        # deduplicated: "KAIST AI" rendered once
+        self.assertEqual(resp.text.count(">KAIST AI<"), 1)
+
     def test_unknown_topic_slug_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = PaperRadarDb(Path(tmp) / "radar.sqlite3")

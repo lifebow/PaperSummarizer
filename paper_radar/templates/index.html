@@ -63,6 +63,15 @@
         <p class="mt-1 text-sm text-slate-400 truncate">{{ p.authors|join(", ") }}</p>
         {% endif %}
 
+        {% if p.affiliations %}
+        <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
+          <span aria-hidden="true">🏢</span>
+          {% for aff in p.affiliations %}
+          <span class="px-2 py-0.5 rounded bg-slate-800/80 text-slate-300">{{ aff }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
         <div class="mt-2 flex flex-wrap gap-1.5">
           {% for label, slug in p.topics %}
           <span class="px-2 py-0.5 rounded-full text-xs bg-sky-500/15 text-sky-300 border border-sky-500/30">{{ label }}</span>

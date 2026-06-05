@@ -75,8 +75,11 @@ def create_app(db: PaperRadarDb, queries: list[str]) -> FastAPI:
 
         papers = db.accepted_results_for_date(selected_date) if selected_date else []
         for paper in papers:
+            summary = paper.get("summary") or {}
             paper["topics"] = [(label, topic_slug(label)) for label in tag_paper(paper, queries)]
-            paper["ideas"] = normalize_ideas((paper.get("summary") or {}).get("ideas_to_try"))
+            paper["ideas"] = normalize_ideas(summary.get("ideas_to_try"))
+            affs = paper.get("author_affiliations") or summary.get("author_affiliations") or []
+            paper["affiliations"] = list(dict.fromkeys(a for a in affs if a))
 
         if selected_slugs:
             chosen = set(selected_slugs)
