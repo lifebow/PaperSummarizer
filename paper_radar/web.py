@@ -15,6 +15,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from .config import union_queries
 from .db import PaperRadarDb
 from .topics import OTHER_TOPIC, paper_filter_sets, tag_paper, topic_slug
 
@@ -65,12 +66,8 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     # union of all sets' queries (dedup, order preserved) — used for keyword tags
-    union_queries: list[str] = []
-    for fset in filter_sets:
-        for query in fset.queries:
-            if query not in union_queries:
-                union_queries.append(query)
-    known_kw_slugs = {topic_slug(q) for q in union_queries}
+    queries = union_queries(filter_sets)
+    known_kw_slugs = {topic_slug(q) for q in queries}
 
     set_by_slug = {topic_slug(fset.name): fset for fset in filter_sets}
 
@@ -93,7 +90,7 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
         papers = db.accepted_results_for_date(selected_date) if selected_date else []
         for paper in papers:
             summary = paper.get("summary") or {}
-            paper["topics"] = [(label, topic_slug(label)) for label in tag_paper(paper, union_queries)]
+            paper["topics"] = [(label, topic_slug(label)) for label in tag_paper(paper, queries)]
             paper["ideas"] = normalize_ideas(summary.get("ideas_to_try"))
             affs = paper.get("author_affiliations") or summary.get("author_affiliations") or []
             paper["affiliations"] = list(dict.fromkeys(a for a in affs if a))

@@ -19,6 +19,16 @@ class TopicConfig:
     filters: list[FilterSet] = field(default_factory=list)
 
 
+def union_queries(filter_sets: list[FilterSet]) -> list[str]:
+    """De-duplicated union of every set's queries, preserving first-seen order."""
+    union: list[str] = []
+    for fset in filter_sets:
+        for query in fset.queries:
+            if query not in union:
+                union.append(query)
+    return union
+
+
 def _build_filter_sets(topics: dict[str, Any]) -> tuple[list[FilterSet], list[str]]:
     """Return (filter_sets, union_queries). Supports the named-set format
     (``topics.filters`` as a name -> queries map) and falls back to wrapping a
@@ -30,12 +40,7 @@ def _build_filter_sets(topics: dict[str, Any]) -> tuple[list[FilterSet], list[st
         flat = [str(q) for q in topics.get("queries", [])]
         sets = [FilterSet("AI Safety", flat)] if flat else []
 
-    union: list[str] = []
-    for fset in sets:
-        for query in fset.queries:
-            if query not in union:
-                union.append(query)
-    return sets, union
+    return sets, union_queries(sets)
 
 
 @dataclass(frozen=True)
