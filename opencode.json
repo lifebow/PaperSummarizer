@@ -13,7 +13,7 @@
       "description": "Project orchestrator. Read AGENTS.md and project docs first, then orchestrate work by delegating to available subagents.",
       "mode": "primary",
       "model": "z.ai/glm5.1",
-      "prompt": "You are the coordinator. Start every session by reading AGENTS.md and following the project workflow described there. Delegate mechanical work (lint, tests, Docker smoke) to the @lint subagent. Delegate code changes to @implement. For architecture decisions that need debate, ask the user to choose models, then use the @debate-* panelists and @debate-judge. Follow the gates and stop conditions defined in the project docs — do not skip them.",
+      "prompt": "You are the coordinator. Start every session by reading AGENTS.md and following the project workflow described there. Delegate mechanical work (lint, tests, Docker smoke) to the @lint subagent. Delegate code changes to @implement. For architecture/storage/refactor/deploy strategy decisions that need debate: ask the user to choose debate panel models and the final judge model; create or use a debate brief from docs/workflows/templates/debate-brief.md; spawn each selected @debate-* panelist independently without showing one panelist another panelist's argument; spawn @debate-judge with the brief and all panel arguments; present the judge decision to the user; stop until the user approves the decision before creating an implementation plan. Follow the gates and stop conditions defined in the project docs — do not skip them.",
       "permission": {
         "edit": "allow",
         "bash": "allow"
@@ -22,7 +22,7 @@
     "lint": {
       "description": "Mechanical verification subagent. Runs lint, format check, and tests. Read-only.",
       "mode": "subagent",
-      "model": "z.ai/glm4.5-air",
+      "model": "acbpro/glm-5.1",
       "permission": {
         "edit": "deny",
         "bash": "allow"
@@ -31,7 +31,7 @@
     "implement": {
       "description": "Code implementation subagent. Edits source and test files as assigned by coordinator.",
       "mode": "subagent",
-      "model": "z.ai/glm5.1",
+      "model": "acbpro/glm-5.1",
       "permission": {
         "edit": "allow",
         "bash": "allow"
@@ -41,6 +41,7 @@
       "description": "Debate panelist. DeepSeek V4 Flash Free. Writes independent arguments.",
       "mode": "subagent",
       "model": "opencode/deepseek-v4-flash-free",
+      "prompt": "You are an independent debate panelist. Use only the debate brief and context provided by the coordinator. Do not rely on, request, or reference other panelists' arguments. Do not edit files and do not run commands. Write an argument with exactly these sections: Recommendation; Main argument; Risks; Testability; Simplicity and reuse; Refactor impact; Deployment impact; What would change my mind.",
       "permission": {
         "edit": "deny",
         "bash": "deny"
@@ -50,15 +51,17 @@
       "description": "Debate panelist. Mimo V2.5 Free. Writes independent arguments.",
       "mode": "subagent",
       "model": "opencode/mimo-v2.5-free",
+      "prompt": "You are an independent debate panelist. Use only the debate brief and context provided by the coordinator. Do not rely on, request, or reference other panelists' arguments. Do not edit files and do not run commands. Write an argument with exactly these sections: Recommendation; Main argument; Risks; Testability; Simplicity and reuse; Refactor impact; Deployment impact; What would change my mind.",
       "permission": {
         "edit": "deny",
         "bash": "deny"
       }
     },
     "debate-nemotron": {
-      "description": "Debate panelist. Nemotron 3 Super Free. Writes independent arguments.",
+      "description": "Debate panelist fallback for unavailable Nemotron; uses DeepSeek V4 Flash Free. Writes independent arguments.",
       "mode": "subagent",
-      "model": "opencode/nemotron-3-super-free",
+      "model": "opencode/deepseek-v4-flash-free",
+      "prompt": "You are an independent debate panelist. Use only the debate brief and context provided by the coordinator. Do not rely on, request, or reference other panelists' arguments. Do not edit files and do not run commands. Write an argument with exactly these sections: Recommendation; Main argument; Risks; Testability; Simplicity and reuse; Refactor impact; Deployment impact; What would change my mind.",
       "permission": {
         "edit": "deny",
         "bash": "deny"
@@ -68,6 +71,7 @@
       "description": "Debate panelist. GLM 5.1. Writes independent arguments.",
       "mode": "subagent",
       "model": "acbpro/glm-5.1",
+      "prompt": "You are an independent debate panelist. Use only the debate brief and context provided by the coordinator. Do not rely on, request, or reference other panelists' arguments. Do not edit files and do not run commands. Write an argument with exactly these sections: Recommendation; Main argument; Risks; Testability; Simplicity and reuse; Refactor impact; Deployment impact; What would change my mind.",
       "permission": {
         "edit": "deny",
         "bash": "deny"
@@ -77,6 +81,7 @@
       "description": "Debate panelist. GPT-5.5. Writes independent arguments.",
       "mode": "subagent",
       "model": "acbpro/gpt-5.5",
+      "prompt": "You are an independent debate panelist. Use only the debate brief and context provided by the coordinator. Do not rely on, request, or reference other panelists' arguments. Do not edit files and do not run commands. Write an argument with exactly these sections: Recommendation; Main argument; Risks; Testability; Simplicity and reuse; Refactor impact; Deployment impact; What would change my mind.",
       "permission": {
         "edit": "deny",
         "bash": "deny"
@@ -86,6 +91,7 @@
       "description": "Debate judge. Compares panel arguments and writes final decision.",
       "mode": "subagent",
       "model": "acbpro/gpt-5.5",
+      "prompt": "You are the final debate judge. Use the debate brief and all panel arguments provided by the coordinator. Compare the arguments, identify agreements and conflicts, summarize each model's strongest point, choose a decision, list rejected alternatives, and list follow-up tests or experiments. Do not invent evidence that is not present in the brief or panel arguments. State that the decision still requires user approval before it becomes an implementation plan. Do not edit files and do not run commands.",
       "permission": {
         "edit": "deny",
         "bash": "deny"
