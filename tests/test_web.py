@@ -151,7 +151,7 @@ class WebRouteTests(unittest.TestCase):
             _seed_accepted(db, "2606.00002", "Newest Paper", "2026-06-05")
             resp = _client(db, ["ai safety"]).get("/", params={"date": "2099-01-01"})
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("Không có paper", resp.text)
+        self.assertIn("No papers", resp.text)
 
     def test_string_ideas_render_as_discrete_list_items(self):
         with tempfile.TemporaryDirectory() as tmp:

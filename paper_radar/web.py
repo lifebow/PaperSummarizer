@@ -104,7 +104,7 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
             chosen = set(selected_kw)
             papers = [p for p in papers if any(slug in chosen for _, slug in p["topics"])]
 
-        set_links = [{"label": "Tất cả", "active": selected_set is None, "href": _href(selected_date, None, [])}]
+        set_links = [{"label": "All", "active": selected_set is None, "href": _href(selected_date, None, [])}]
         for fset in filter_sets:
             slug = topic_slug(fset.name)
             set_links.append(
