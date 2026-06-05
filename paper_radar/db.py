@@ -11,6 +11,8 @@ from ._time import now_utc_iso
 
 logger = logging.getLogger(__name__)
 
+_COMPLETED_STATUSES = frozenset({"accepted", "rejected_qa", "rejected_relevance", "error"})
+
 
 class PaperRadarDb:
     def __init__(self, path: str | Path):
@@ -224,6 +226,37 @@ class PaperRadarDb:
             item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
             results.append(item)
         return results
+
+    def upsert_paper_discovery(self, paper: dict[str, Any]) -> int:
+        arxiv_id = paper.get("arxiv_id", "")
+        existing = self.get_paper_by_arxiv_id(arxiv_id) if arxiv_id else None
+        if existing:
+            return int(existing["id"])
+        record = dict(paper)
+        if "archive_status" not in record:
+            record["archive_status"] = "metadata_only"
+        return self.upsert_paper(record)
+
+    def metadata_only_papers(self, limit: int = 300) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM papers
+                WHERE archive_status = 'metadata_only'
+                ORDER BY first_seen_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_papers_by_status(self, status: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM papers WHERE archive_status = ?",
+                (status,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
 
     def update_paper_archive_status(self, arxiv_id: str, status: str, error: str = "") -> None:
         with self._connect() as conn:

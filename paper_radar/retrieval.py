@@ -130,9 +130,30 @@ class ArxivClient:
             self._client = session
 
     def search_recent(self, categories: list[str], *, since: str, limit: int = 200) -> list[PaperMetadata]:
-        """Fetch recent arXiv papers from /list/<archive>/recent HTML."""
         since_date = since[:10] if since else "2020-01-01"
         return self.search_recent_new_only(categories, since=since_date, limit=limit, paper_exists=None)
+
+    def search_list_only(
+        self,
+        categories: list[str],
+        *,
+        limit: int = 2000,
+        paper_exists: Callable[[str], bool] | None = None,
+    ) -> list[PaperMetadata]:
+        return self._parse_list_page(categories, limit, paper_exists=paper_exists)
+
+    def hydrate_papers(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
+        hydrated: list[PaperMetadata] = []
+        for paper in papers:
+            try:
+                resp = self._client.get(f"https://arxiv.org/abs/{paper.arxiv_id}", timeout=30)
+                resp.raise_for_status()
+                abs_paper = self._parse_abs_page(paper.arxiv_id, resp.text)
+            except Exception as exc:
+                logger.debug("arXiv abs hydration failed for %s: %s", paper.arxiv_id, exc)
+                abs_paper = None
+            hydrated.append(self._merge_abs_with_list(abs_paper, paper))
+        return hydrated
 
     def search_recent_new_only(
         self,
@@ -162,12 +183,23 @@ class ArxivClient:
         scan_limit: int | None = None,
     ) -> list[PaperMetadata]:
         """Parse arXiv /list/<archive>/recent HTML, then fetch /abs pages."""
+        list_papers = self._parse_list_page(categories, scan_limit or limit, paper_exists=paper_exists)
+        list_papers = list_papers[:limit]
+        logger.info("arXiv recent list page returned %d papers", len(list_papers))
+        return self._fetch_abs_metadata(list_papers, since_date)
+
+    def _parse_list_page(
+        self,
+        categories: list[str],
+        limit: int,
+        *,
+        paper_exists: Callable[[str], bool] | None = None,
+    ) -> list[PaperMetadata]:
         import re as _re
         from html import unescape
 
         archive = self._archive_from_categories(categories)
-        show = scan_limit or limit
-        url = f"https://arxiv.org/list/{archive}/recent?skip=0&show={show}"
+        url = f"https://arxiv.org/list/{archive}/recent?skip=0&show={limit}"
 
         logger.info("arXiv list request: %s", url)
         resp = self._client.get(url, timeout=30)
@@ -176,7 +208,6 @@ class ArxivClient:
         papers: list[PaperMetadata] = []
         seen_ids: set[str] = set()
 
-        # arXiv list pages are structured as <dt> links followed by <dd> metadata.
         pairs = _re.findall(r"<dt>(.*?)</dt>\s*<dd>(.*?)</dd>", resp.text, _re.DOTALL | _re.IGNORECASE)
         for dt_html, dd_html in pairs:
             id_match = _re.search(r'href\s*=\s*["\']/abs/([^"\']+)["\']', dt_html)
@@ -205,7 +236,6 @@ class ArxivClient:
             )
 
         if not papers:
-            # Older/simple markup fallback: at least preserve IDs if title parsing fails.
             for arxiv_id in _re.findall(r'href\s*=\s*["\']/abs/(\d+\.\d+(?:v\d+)?)["\']', resp.text):
                 normalized = _normalize_arxiv_id(arxiv_id)
                 if normalized and normalized not in seen_ids:
@@ -221,9 +251,8 @@ class ArxivClient:
                         )
                     )
 
-        list_papers = papers[:limit] if paper_exists is None else papers[: min(len(papers), limit)]
-        logger.info("arXiv recent list page returned %d papers for %s", len(list_papers), archive)
-        return self._fetch_abs_metadata(list_papers, since_date)
+        logger.info("arXiv list page parsed %d papers for %s", len(papers), archive)
+        return papers
 
     def _fetch_abs_metadata(self, list_papers: list[PaperMetadata], since_date: str) -> list[PaperMetadata]:
         papers: list[PaperMetadata] = []

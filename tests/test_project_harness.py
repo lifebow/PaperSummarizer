@@ -158,6 +158,50 @@ class ProjectHarnessTests(unittest.TestCase):
         self.assertIn("model-backed OpenCode execution", opencode)
         self.assertIn("~/.local/share/opencode", opencode)
 
+    def test_opencode_debate_agents_carry_debate_protocol(self):
+        config = json.loads((ROOT / "opencode.json").read_text(encoding="utf-8"))
+        agents = config["agent"]
+
+        coordinator_prompt = agents["coordinator"]["prompt"]
+        self.assertIn("ask the user to choose debate panel models", coordinator_prompt)
+        self.assertIn("spawn each selected @debate-* panelist independently", coordinator_prompt)
+        self.assertIn("stop until the user approves", coordinator_prompt)
+
+        panelist_names = [
+            "debate-deepseek",
+            "debate-mimo",
+            "debate-nemotron",
+            "debate-glm",
+            "debate-gpt55",
+        ]
+        required_sections = [
+            "Recommendation",
+            "Main argument",
+            "Risks",
+            "Testability",
+            "Simplicity and reuse",
+            "Refactor impact",
+            "Deployment impact",
+            "What would change my mind",
+        ]
+        for name in panelist_names:
+            prompt = agents[name].get("prompt", "")
+            self.assertIn("independent debate panelist", prompt, name)
+            self.assertIn("Do not rely on", prompt, name)
+            self.assertIn("Do not edit files", prompt, name)
+            self.assertIn("do not run commands", prompt, name)
+            for section in required_sections:
+                self.assertIn(section, prompt, name)
+
+        judge_prompt = agents["debate-judge"].get("prompt", "")
+        self.assertIn("final debate judge", judge_prompt)
+        self.assertIn("identify agreements and conflicts", judge_prompt)
+        self.assertIn("summarize each model's strongest point", judge_prompt)
+        self.assertIn("list rejected alternatives", judge_prompt)
+        self.assertIn("follow-up tests or experiments", judge_prompt)
+        self.assertIn("Do not invent evidence", judge_prompt)
+        self.assertIn("requires user approval", judge_prompt)
+
     def test_env_example_documents_secret_groups_and_skip_behavior(self):
         env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 

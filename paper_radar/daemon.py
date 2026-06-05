@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from ._s2 import PaperMetadata
-from ._time import default_since, local_now, now_utc_iso
+from ._time import local_now, now_utc_iso
 from .config import AppConfig
 from .db import PaperRadarDb
 from .digest import (
@@ -16,31 +17,42 @@ from .digest import (
 )
 from .extraction import PdfExtractor, extract_introduction, process_pdf_with_cleanup
 from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, normalize_score, passes_quality_gate
-from .retrieval import PdfDownloader, _normalize_arxiv_id, make_default_retriever
+from .retrieval import ArxivClient, PdfDownloader, _normalize_arxiv_id, make_default_retriever
 from .telegram import TelegramSender, make_expand_keyboard
 
 logger = logging.getLogger(__name__)
 
 
 class RunBudget:
-    """Track LLM call count against a per-run limit."""
+    """Track LLM call count against a per-run limit. Thread-safe."""
 
     def __init__(self, max_calls: int):
         self.max_calls = max_calls
         self.calls_used = 0
+        self._lock = threading.Lock()
 
     def can_call(self) -> bool:
-        if self.max_calls <= 0:
-            return True
-        return self.calls_used < self.max_calls
+        with self._lock:
+            if self.max_calls <= 0:
+                return True
+            return self.calls_used < self.max_calls
 
     def record_call(self) -> None:
-        self.calls_used += 1
+        with self._lock:
+            self.calls_used += 1
+
+    def try_record_call(self) -> bool:
+        with self._lock:
+            if self.max_calls > 0 and self.calls_used >= self.max_calls:
+                return False
+            self.calls_used += 1
+            return True
 
     def describe(self) -> str:
-        if self.max_calls <= 0:
-            return f"{self.calls_used}/unlimited"
-        return f"{self.calls_used}/{self.max_calls}"
+        with self._lock:
+            if self.max_calls <= 0:
+                return f"{self.calls_used}/unlimited"
+            return f"{self.calls_used}/{self.max_calls}"
 
 
 def _hash_paper(title: str, abstract: str) -> str:
@@ -107,6 +119,7 @@ class PaperRadarService:
         extractor: Any | None = None,
         llm: Any | None = None,
         telegram: Any | None = None,
+        arxiv_client: Any | None = None,
     ):
         self.config = config
         self.db = db or PaperRadarDb(config.paths.database)
@@ -122,6 +135,7 @@ class PaperRadarService:
             bot_token=config.telegram.bot_token,
             chat_id=config.telegram.chat_id,
         )
+        self.arxiv_client = arxiv_client or ArxivClient()
 
     def run_once(self, *, now_date: str | None = None, now_time: str | None = None) -> dict[str, int]:
         self.db.initialize()
@@ -129,9 +143,6 @@ class PaperRadarService:
         if requeued_count:
             logger.info("Requeued %d interrupted papers", requeued_count)
         run_id = self.db.start_run()
-        since = self.db.get_state("last_successful_fetch_at") or default_since(
-            self.config.daemon.first_run_lookback_hours
-        )
         now = local_now(self.config.daemon.timezone)
         digest_date = now_date or now.strftime("%Y-%m-%d")
         batch_time = now_time or now.strftime("%H:%M")
@@ -140,15 +151,9 @@ class PaperRadarService:
         budget = RunBudget(self.config.pipeline.max_llm_calls_per_run)
 
         try:
-            found_papers = self.retriever.search_recent(
-                self.config.topics.queries,
-                self.config.topics.categories,
-                since=since,
-                limit=100,
-            )
-            found_count = len(found_papers)
-            queued_count = self._enqueue_found_papers(found_papers)
-            phase2_results = self._drain_queue(run_id, digest_date, batch_time, budget, queued_count)
+            discovered_count = self._discover_list_only(batch_time)
+            self._hydrate_metadata()
+            phase2_results = self._drain_queue(run_id, digest_date, batch_time, budget)
             for result in phase2_results:
                 if result.get("accepted"):
                     accepted_count += 1
@@ -156,11 +161,12 @@ class PaperRadarService:
                 elif result.get("error"):
                     error_count += 1
 
-            # Sort deterministically before writing
+            found_count = discovered_count
             accepted_for_digest.sort(key=lambda p: p.get("arxiv_id", ""))
 
             if accepted_for_digest:
                 append_digest_batch(self.config.paths.digests, digest_date, batch_time, accepted_for_digest)
+                self._send_accepted_cards(accepted_for_digest)
             self.send_scan_notification(found_count, accepted_count, error_count, digest_date, batch_time)
             self.db.set_state("last_successful_fetch_at", now_utc_iso())
             self.db.finish_run(run_id, "ok", found_count, accepted_count, error_count)
@@ -176,15 +182,81 @@ class PaperRadarService:
             )
             raise
 
-    def _enqueue_found_papers(self, found_papers: list[Any]) -> int:
-        queued_count = 0
-        for paper in found_papers:
+    def _is_release_window(self, batch_time: str) -> bool:
+        cfg = self.config.daemon
+        if not cfg.release_window_start or not cfg.release_window_end:
+            return False
+        return cfg.release_window_start <= batch_time <= cfg.release_window_end
+
+    def _discover_list_only(self, batch_time: str) -> int:
+        if self._is_release_window(batch_time):
+            discovery_limit = self.config.pipeline.release_discovery_limit
+        else:
+            discovery_limit = self.config.pipeline.normal_discovery_limit
+        if discovery_limit <= 0:
+            return 0
+        try:
+            papers = self.arxiv_client.search_list_only(
+                self.config.topics.categories,
+                limit=discovery_limit,
+                paper_exists=lambda arxiv_id: self.db.get_paper_by_arxiv_id(_normalize_arxiv_id(arxiv_id)) is not None,
+            )
+        except Exception as exc:
+            logger.warning("List-only discovery failed: %s", exc)
+            return 0
+        discovered = 0
+        for paper in papers:
             paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
             record = paper.to_record()
-            record["archive_status"] = "queued"
-            self.db.upsert_paper(record)
-            queued_count += 1
-        return queued_count
+            record.pop("archive_status", None)
+            self.db.upsert_paper_discovery(record)
+            discovered += 1
+        logger.info("List-only discovery: %d papers", discovered)
+        return discovered
+
+    def _hydrate_metadata(self) -> int:
+        hydrate_limit = self.config.pipeline.hydrate_metadata_per_run
+        if hydrate_limit <= 0:
+            return 0
+        rows = self.db.metadata_only_papers(limit=hydrate_limit)
+        if not rows:
+            return 0
+        papers = [
+            PaperMetadata(
+                arxiv_id=row.get("arxiv_id", ""),
+                title=row.get("title", ""),
+                pdf_url=row.get("pdf_url", ""),
+                source=row.get("source", ""),
+            )
+            for row in rows
+        ]
+        try:
+            hydrated = self.arxiv_client.hydrate_papers(papers)
+        except Exception as exc:
+            logger.warning("Metadata hydration failed: %s", exc)
+            return 0
+        count = 0
+        for paper in hydrated:
+            paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
+            if paper.abstract:
+                record = paper.to_record()
+                record["archive_status"] = "queued"
+                self.db.upsert_paper(record)
+                count += 1
+            else:
+                logger.debug("Hydration produced no abstract for %s, keeping metadata_only", paper.arxiv_id)
+        logger.info("Hydrated %d/%d metadata_only papers", count, len(rows))
+        return count
+
+    def _send_accepted_cards(self, accepted_batch: list[dict[str, Any]]) -> None:
+        for paper in accepted_batch:
+            msg = render_paper_short(paper)
+            if msg:
+                keyboard = make_expand_keyboard(paper.get("arxiv_id", ""))
+                try:
+                    self.telegram.send_message(msg, reply_markup=keyboard)
+                except Exception as exc:
+                    logger.warning("Telegram paper card failed for %s: %s", paper.get("arxiv_id"), exc)
 
     def _drain_queue(
         self,
@@ -192,46 +264,56 @@ class PaperRadarService:
         digest_date: str,
         batch_time: str,
         budget: RunBudget,
-        queued_count: int,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        processed_count = 0
+        total_processed = 0
+        total_candidates = 0
+        max_per_run = self.config.pipeline.max_papers_per_run
+        max_candidates = self.config.pipeline.max_summary_candidates_per_run
+
         while True:
-            if self.llm and budget.max_calls > 0 and not budget.can_call():
+            if max_per_run > 0 and total_processed >= max_per_run:
                 logger.info(
-                    "Stopping queue drain: LLM budget exhausted (%d/%d)",
-                    budget.calls_used,
-                    budget.max_calls,
+                    "Stopping queue drain: per-run processing cap reached (%d/%d)",
+                    total_processed,
+                    max_per_run,
                 )
                 break
 
-            papers = self._queued_paper_metadata(limit=self.config.pipeline.max_papers_per_run)
+            remaining = max_per_run - total_processed if max_per_run > 0 else 50
+            papers = self._queued_paper_metadata(limit=min(remaining, 50))
             if not papers:
                 break
             self._enrich_author_affiliations(papers)
 
-            new_papers: list[Any] = []
-            for paper in papers:
-                paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
-                new_papers.append(paper)
-
-            processed_count += len(new_papers)
+            batch_size = len(papers)
+            total_processed += batch_size
             logger.info(
-                "Queued %d new papers; processing queued batch of %d papers (total this run: %d)",
-                queued_count,
-                len(new_papers),
-                processed_count,
+                "Processing queued batch of %d papers (total this run: %d)",
+                batch_size,
+                total_processed,
             )
 
-            candidates = self._phase1_relevance(new_papers, budget)
+            candidates = self._phase1_relevance(papers, budget)
             logger.info(
                 "Phase 1 done: %d/%d passed relevance (LLM calls used: %s)",
                 len(candidates),
-                len(new_papers),
+                batch_size,
                 budget.describe(),
             )
 
-            results.extend(self._phase2_summarize_qa(candidates, run_id, digest_date, batch_time, budget))
+            candidate_budget = max_candidates - total_candidates if max_candidates > 0 else len(candidates)
+            if candidate_budget <= 0:
+                logger.info(
+                    "Stopping queue drain: summary candidate cap reached (%d/%d)",
+                    total_candidates,
+                    max_candidates,
+                )
+                break
+            capped_candidates = candidates[:candidate_budget]
+            total_candidates += len(capped_candidates)
+
+            results.extend(self._phase2_summarize_qa(capped_candidates, run_id, digest_date, batch_time, budget))
         return results
 
     def _queued_paper_metadata(self, *, limit: int) -> list[PaperMetadata]:
@@ -292,9 +374,8 @@ class PaperRadarService:
         max_workers = min(self.config.pipeline.llm_concurrency, len(need_scoring))
 
         def score_one(paper: Any, paper_hash: str) -> tuple[Any, str, dict[str, Any] | None]:
-            if not budget.can_call():
+            if not budget.try_record_call():
                 return (paper, paper_hash, None)
-            budget.record_call()
             try:
                 score = self.llm.relevance(paper, self.config.topics.queries)
                 return (paper, paper_hash, score)
@@ -355,8 +436,7 @@ class PaperRadarService:
                     # Summary LLM
                     summary = {}
                     qa = {}
-                    if self.llm and budget.can_call():
-                        budget.record_call()
+                    if self.llm and budget.try_record_call():
                         try:
                             summary = self.llm.summarize(paper, summary_text)
                         except Exception as exc:
@@ -365,9 +445,7 @@ class PaperRadarService:
                                 self.db.update_paper_archive_status(paper.arxiv_id, "retry_later", str(exc))
                             return False
 
-                    # QA LLM
-                    if self.llm and budget.can_call():
-                        budget.record_call()
+                    if self.llm and budget.try_record_call():
                         try:
                             qa = self.llm.qa(paper, summary, paper.abstract)
                         except Exception as exc:

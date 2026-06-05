@@ -321,3 +321,50 @@ Important workflow rules encoded in docs:
 - Docker/Compose smoke is a final gate when deploy files exist.
 - Machine-enforced harness replaces memory-based verification with
   `scripts/harness.sh`, `make verify`, and a pre-push refactor cadence gate.
+
+## ArXiv Daily Release Workflow
+
+arXiv releases a daily batch of 1000-2000 CS.AI papers around
+07:00-09:00 UTC+7 via the `/list/<archive>/recent?show=<limit>` page.
+Paper-radar handles this with a metadata-first queue:
+
+- `daemon._discover_list_only()` fetches id/title/link only and stores
+  rows with `archive_status="metadata_only"`.
+- `daemon._hydrate_metadata()` does bounded `/abs` lookups per run to
+  fill abstracts and move rows to `archive_status="queued"`.
+- The two-phase LLM pipeline (relevance with cache, then summary+QA)
+  consumes the `queued` rows under the existing `RunBudget` caps.
+
+`RunBudget` is thread-safe via `threading.Lock` and `try_record_call()`,
+so parallel workers (relevance, hydration, summary) cannot overshoot
+LLM call or token budgets. `max_papers_per_run` and
+`max_summary_candidates_per_run` are enforced as real per-run caps and
+the queue does not loop past them.
+
+Config knobs (with backward-compatible defaults):
+
+- `daemon.release_window_start`, `daemon.release_window_end` (UTC+7
+  hours). Inside the window the daemon uses `release_discovery_limit`
+  on `/list/cs/recent`; outside the window it falls back to
+  `normal_discovery_limit`.
+- `pipeline.release_discovery_limit`, `pipeline.normal_discovery_limit`,
+  `pipeline.hydrate_metadata_per_run`.
+
+## Subagent / Harness Caveats
+
+- `opencode.json` maps:
+  - `@implement` -> `acbpro/glm-5.1`
+  - `@lint` -> `acbpro/glm-5.1`
+  - `@coordinator` -> `z.ai/glm5.1` (TUI-managed auth)
+  - `small_model` -> `z.ai/glm4.5-air`
+- Do not add a project-level `provider.z.ai` block in `opencode.json`;
+  it overrides the TUI-authenticated provider and breaks the auth
+  header (`Authentication parameter not received in Header`).
+- In some sessions `@lint` returns `ProviderModelNotFoundError` even
+  after `opencode debug agent lint` resolves the model. When that
+  happens, fall back to coordinator-run `scripts/harness.sh` and
+  `scripts/harness.sh --pre-push` and record the proof-level caveat
+  in the session handoff.
+- If `podman compose run` fails with "name pod_newpapers is in use",
+  remove only this project's leftover pod with
+  `podman pod rm pod_newpapers`; do not delete foreign pods.

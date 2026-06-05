@@ -18,6 +18,8 @@ class DaemonConfig:
     timezone: str = "Asia/Ho_Chi_Minh"
     daily_recap_time: str = "21:00"
     first_run_lookback_hours: int = 48
+    release_window_start: str = ""
+    release_window_end: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,9 @@ class PipelineConfig:
     max_summary_candidates_per_run: int = 20
     enable_relevance_cache: bool = True
     merge_summary_qa: bool = False
+    release_discovery_limit: int = 2000
+    normal_discovery_limit: int = 100
+    hydrate_metadata_per_run: int = 300
 
 
 @dataclass(frozen=True)
@@ -118,6 +123,8 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
             timezone=str(daemon.get("timezone", "Asia/Ho_Chi_Minh")),
             daily_recap_time=str(daemon.get("daily_recap_time", "21:00")),
             first_run_lookback_hours=int(daemon.get("first_run_lookback_hours", 48)),
+            release_window_start=str(daemon.get("release_window_start", "")),
+            release_window_end=str(daemon.get("release_window_end", "")),
         ),
         filters=FilterConfig(
             max_papers_per_batch=int(filters.get("max_papers_per_batch", 20)),
@@ -157,6 +164,9 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
             max_summary_candidates_per_run=int(pipeline.get("max_summary_candidates_per_run", 20)),
             enable_relevance_cache=bool(pipeline.get("enable_relevance_cache", True)),
             merge_summary_qa=bool(pipeline.get("merge_summary_qa", False)),
+            release_discovery_limit=int(pipeline.get("release_discovery_limit", 2000)),
+            normal_discovery_limit=int(pipeline.get("normal_discovery_limit", 100)),
+            hydrate_metadata_per_run=int(pipeline.get("hydrate_metadata_per_run", 300)),
         ),
     )
 
