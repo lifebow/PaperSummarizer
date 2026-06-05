@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 import time
@@ -17,7 +18,14 @@ from .digest import (
 )
 from .extraction import PdfExtractor, extract_introduction, process_pdf_with_cleanup
 from .llm import build_qa_prompt, build_relevance_prompt, build_summary_prompt, normalize_score, passes_quality_gate
-from .retrieval import ArxivClient, PdfDownloader, _normalize_arxiv_id, make_default_retriever
+from .retrieval import (
+    ArxivClient,
+    PdfDownloader,
+    _normalize_arxiv_id,
+    choose_allowed_show,
+    make_default_retriever,
+    parse_latest_section_header,
+)
 from .telegram import TelegramSender, make_expand_keyboard
 
 logger = logging.getLogger(__name__)
@@ -55,9 +63,21 @@ class RunBudget:
             return f"{self.calls_used}/{self.max_calls}"
 
 
-def _hash_paper(title: str, abstract: str) -> str:
+def _hash_paper(title: str, abstract: str, topic_fingerprint: str = "") -> str:
     """Deterministic hash for relevance cache key."""
-    return hashlib.sha256(f"{title}||{abstract}".encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{topic_fingerprint}||{title}||{abstract}".encode()).hexdigest()[:16]
+
+
+def _topic_fingerprint(config: AppConfig) -> str:
+    payload = {
+        "categories": config.topics.categories,
+        "queries": config.topics.queries,
+        "relevance_threshold": config.filters.relevance_threshold,
+        "grounding_threshold": config.filters.grounding_threshold,
+        "idea_threshold": config.filters.idea_threshold,
+    }
+    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
 class DefaultPaperLlm:
@@ -136,6 +156,7 @@ class PaperRadarService:
             chat_id=config.telegram.chat_id,
         )
         self.arxiv_client = arxiv_client or ArxivClient()
+        self.topic_fingerprint = _topic_fingerprint(config)
 
     def run_once(self, *, now_date: str | None = None, now_time: str | None = None) -> dict[str, int]:
         self.db.initialize()
@@ -169,6 +190,7 @@ class PaperRadarService:
                 self._send_accepted_cards(accepted_for_digest)
             self.send_scan_notification(found_count, accepted_count, error_count, digest_date, batch_time)
             self.db.set_state("last_successful_fetch_at", now_utc_iso())
+            self.db.set_state("arxiv_recent_latest_topic_fingerprint", self.topic_fingerprint)
             self.db.finish_run(run_id, "ok", found_count, accepted_count, error_count)
             return {"found_count": found_count, "accepted_count": accepted_count, "error_count": error_count}
         except Exception as exc:
@@ -181,6 +203,72 @@ class PaperRadarService:
                 error_count + 1,
             )
             raise
+
+    def run_startup_check(
+        self,
+        *,
+        now_date: str | None = None,
+        now_time: str | None = None,
+    ) -> dict[str, Any]:
+        """Notify on startup, then scan or replay the already-completed recent section."""
+        self.db.initialize()
+        self._send_startup_message("Bot online. Đang kiểm tra arXiv recent...")
+
+        try:
+            probe_html = self.arxiv_client.fetch_page_html(self.config.topics.categories, show=50)
+            header = parse_latest_section_header(probe_html)
+        except Exception as exc:
+            logger.warning("Startup recent probe failed: %s", exc)
+            header = None
+
+        if header and self._is_section_complete(header.section_date, header.expected_total):
+            if self._topics_changed_since_latest_scan():
+                digest_date = self.db.get_state("arxiv_recent_latest_digest_date") or header.section_date_iso
+                reset_count = self.db.reset_results_for_digest_date(digest_date)
+                requeued = self.db.requeue_papers_published_on(header.section_date_iso)
+                # Title+abstract của ngày này đã lưu trong DB; relevance chỉ cần
+                # title+abstract, nên không re-scan arXiv — giữ complete=true để
+                # _discover_list_only skip fetch, _drain_queue chấm điểm lại từ DB.
+                self._send_startup_message(
+                    "Topic filter đã đổi; chấm điểm lại "
+                    f"{header.section_date} từ {requeued} paper đã lưu "
+                    f"({reset_count} kết quả cũ được reset, không tải lại arXiv)."
+                )
+                result = self.run_once(now_date=now_date, now_time=now_time)
+                return {"status": "rescored_topic_change", **result}
+            digest_date = self.db.get_state("arxiv_recent_latest_digest_date") or header.section_date_iso
+            papers = self.db.accepted_results_for_date(digest_date)
+            discovered = self.db.get_state("arxiv_recent_latest_discovered_count") or "0"
+            self._send_startup_message(
+                "arXiv recent đã quét: "
+                f"{header.section_date} ({discovered}/{header.expected_total} entries), "
+                f"{len(papers)} accepted. Gửi lại kết quả đã lưu..."
+            )
+            self._send_accepted_cards(papers)
+            return {
+                "status": "replayed",
+                "found_count": 0,
+                "accepted_count": len(papers),
+                "error_count": 0,
+            }
+
+        if header:
+            continued = " continued" if header.continued else ""
+            self._send_startup_message(
+                f"Đang quét arXiv recent{continued}: {header.section_date}, "
+                f"expected {header.expected_total} entries. Khi xong sẽ gửi noti lần đầu."
+            )
+        else:
+            self._send_startup_message("Không đọc được header arXiv recent; chạy fallback scan.")
+
+        result = self.run_once(now_date=now_date, now_time=now_time)
+        return {"status": "scanned", **result}
+
+    def _send_startup_message(self, msg: str) -> None:
+        try:
+            self.telegram.send_message(msg)
+        except Exception as exc:
+            logger.warning("Startup notification failed: %s", exc)
 
     def _is_release_window(self, batch_time: str) -> bool:
         cfg = self.config.daemon
@@ -195,6 +283,138 @@ class PaperRadarService:
             discovery_limit = self.config.pipeline.normal_discovery_limit
         if discovery_limit <= 0:
             return 0
+
+        try:
+            probe_html = self.arxiv_client.fetch_page_html(
+                self.config.topics.categories,
+                show=50,
+            )
+        except Exception as exc:
+            logger.warning("List-only discovery probe failed: %s", exc)
+            return self._discover_fallback(discovery_limit)
+
+        header = parse_latest_section_header(probe_html)
+        if header is None:
+            logger.warning("Header parse failed; falling back to configured limit")
+            return self._discover_fallback(discovery_limit)
+
+        target_section = header.section_date
+        target_section_iso = header.section_date_iso
+        expected_total = header.expected_total
+
+        if self._is_section_complete(target_section, expected_total):
+            logger.info(
+                "Section %s already complete (expected=%d), skipping",
+                target_section,
+                expected_total,
+            )
+            return 0
+
+        all_papers_by_id: dict[str, Any] = {}
+
+        while True:
+            show_value = choose_allowed_show(expected_total)
+            all_papers_by_id = {}
+
+            if expected_total <= 2000:
+                try:
+                    page_html = self.arxiv_client.fetch_page_html(
+                        self.config.topics.categories,
+                        show=show_value,
+                    )
+                except Exception as exc:
+                    logger.warning("Full page fetch failed: %s", exc)
+                    return self._discover_fallback(discovery_limit)
+                page_header = parse_latest_section_header(page_html)
+                if page_header and (
+                    page_header.section_date != target_section or page_header.expected_total != expected_total
+                ):
+                    logger.warning(
+                        "Probe/fetch mismatch: probe=(%s, %d) fetch=(%s, %d); using fetch header",
+                        target_section,
+                        expected_total,
+                        page_header.section_date,
+                        page_header.expected_total,
+                    )
+                    target_section = page_header.section_date
+                    target_section_iso = page_header.section_date_iso
+                    expected_total = page_header.expected_total
+                    if self._is_section_complete(target_section, expected_total):
+                        return 0
+                    if expected_total > show_value:
+                        continue
+                all_papers = self.arxiv_client._parse_entries_from_html(
+                    page_html,
+                    target_section=target_section,
+                )
+                all_papers_by_id = {_normalize_arxiv_id(paper.arxiv_id): paper for paper in all_papers}
+                break
+
+            skip = 0
+            while len(all_papers_by_id) < expected_total:
+                try:
+                    page_html = self.arxiv_client.fetch_page_html(
+                        self.config.topics.categories,
+                        show=2000,
+                        skip=skip,
+                    )
+                except Exception as exc:
+                    logger.warning("Pagination fetch skip=%d failed: %s", skip, exc)
+                    break
+                page_header = parse_latest_section_header(page_html)
+                if page_header and page_header.section_date != target_section:
+                    logger.warning(
+                        "Pagination section mismatch: expected=%s got=%s",
+                        target_section,
+                        page_header.section_date,
+                    )
+                    break
+                if page_header:
+                    target_section_iso = page_header.section_date_iso
+                batch = self.arxiv_client._parse_entries_from_html(
+                    page_html,
+                    target_section=target_section,
+                )
+                new_in_batch = 0
+                for paper in batch:
+                    normalized_id = _normalize_arxiv_id(paper.arxiv_id)
+                    if normalized_id not in all_papers_by_id:
+                        all_papers_by_id[normalized_id] = paper
+                        new_in_batch += 1
+                if new_in_batch == 0:
+                    break
+                skip += 2000
+            break
+
+        section_discovered = len(all_papers_by_id)
+        new_discovered = 0
+        for paper in all_papers_by_id.values():
+            paper.arxiv_id = _normalize_arxiv_id(paper.arxiv_id)
+            if self.db.get_paper_by_arxiv_id(paper.arxiv_id) is not None:
+                continue
+            record = paper.to_record()
+            record.pop("archive_status", None)
+            self.db.upsert_paper_discovery(record)
+            new_discovered += 1
+
+        self._update_section_state(
+            target_section,
+            target_section_iso,
+            expected_total,
+            section_discovered,
+            section_discovered >= expected_total,
+        )
+
+        logger.info(
+            "Header-count discovery: %d new papers, %d section entries for section %s (expected=%d)",
+            new_discovered,
+            section_discovered,
+            target_section,
+            expected_total,
+        )
+        return new_discovered
+
+    def _discover_fallback(self, discovery_limit: int) -> int:
         try:
             papers = self.arxiv_client.search_list_only(
                 self.config.topics.categories,
@@ -202,7 +422,7 @@ class PaperRadarService:
                 paper_exists=lambda arxiv_id: self.db.get_paper_by_arxiv_id(_normalize_arxiv_id(arxiv_id)) is not None,
             )
         except Exception as exc:
-            logger.warning("List-only discovery failed: %s", exc)
+            logger.warning("Fallback discovery failed: %s", exc)
             return 0
         discovered = 0
         for paper in papers:
@@ -211,8 +431,52 @@ class PaperRadarService:
             record.pop("archive_status", None)
             self.db.upsert_paper_discovery(record)
             discovered += 1
-        logger.info("List-only discovery: %d papers", discovered)
+        logger.info("Fallback discovery: %d papers", discovered)
         return discovered
+
+    def _is_section_complete(self, section_date: str, expected_total: int) -> bool:
+        stored_date = self.db.get_state("arxiv_recent_latest_section_date")
+        stored_expected = self.db.get_state("arxiv_recent_latest_expected_total")
+        stored_discovered = self.db.get_state("arxiv_recent_latest_discovered_count")
+        stored_complete = self.db.get_state("arxiv_recent_latest_complete")
+        if stored_date != section_date:
+            return False
+        try:
+            if int(stored_expected or "0") != expected_total:
+                return False
+        except (ValueError, TypeError):
+            return False
+        try:
+            discovered = int(stored_discovered or "0")
+        except (ValueError, TypeError):
+            return False
+        return stored_complete == "true" and discovered >= expected_total
+
+    def _topics_changed_since_latest_scan(self) -> bool:
+        stored = self.db.get_state("arxiv_recent_latest_topic_fingerprint")
+        if stored is None:
+            digest_date = self.db.get_state("arxiv_recent_latest_digest_date")
+            if digest_date and self.db.accepted_results_for_date(digest_date):
+                return True
+            self.db.set_state("arxiv_recent_latest_topic_fingerprint", self.topic_fingerprint)
+            return False
+        return stored != self.topic_fingerprint
+
+    def _update_section_state(
+        self,
+        section_date: str,
+        section_date_iso: str,
+        expected_total: int,
+        discovered: int,
+        complete: bool,
+    ) -> None:
+        self.db.set_state("arxiv_recent_latest_section_date", section_date)
+        if section_date_iso:
+            self.db.set_state("arxiv_recent_latest_section_date_iso", section_date_iso)
+            self.db.set_state("arxiv_recent_latest_digest_date", section_date_iso)
+        self.db.set_state("arxiv_recent_latest_expected_total", str(expected_total))
+        self.db.set_state("arxiv_recent_latest_discovered_count", str(discovered))
+        self.db.set_state("arxiv_recent_latest_complete", "true" if complete else "false")
 
     def _hydrate_metadata(self) -> int:
         hydrate_limit = self.config.pipeline.hydrate_metadata_per_run
@@ -357,7 +621,7 @@ class PaperRadarService:
             if not self.llm:
                 candidates.append((paper, {"relevance_score": 10}))
                 continue
-            paper_hash = _hash_paper(paper.title, paper.abstract)
+            paper_hash = _hash_paper(paper.title, paper.abstract, self.topic_fingerprint)
             if self.config.pipeline.enable_relevance_cache:
                 cached = self.db.get_cached_relevance(paper_hash)
                 if cached is not None:

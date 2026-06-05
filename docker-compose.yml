@@ -1,5 +1,6 @@
 services:
   paper-radar:
+    profiles: ["daemon"]
     build: .
     image: paper-radar:latest
     container_name: paper-radar
@@ -9,7 +10,7 @@ services:
       - ./data:/app/data
       - ./digests:/app/digests
     entrypoint: ["paper-radar"]
-    command: ["watch"]
+    command: []
 
   paper-radar-bot:
     build: .

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +14,201 @@ from ._http import USER_AGENT, download_file, json_get
 from ._s2 import PaperMetadata, s2_item_to_paper  # noqa: F401 - re-exported
 
 logger = logging.getLogger(__name__)
+
+VALID_SHOW_VALUES = (25, 50, 100, 250, 500, 1000, 2000)
+
+
+def choose_allowed_show(total: int) -> int:
+    """Return the smallest valid arXiv ``show`` value >= *total*, capped at 2000."""
+    if total <= 0:
+        return VALID_SHOW_VALUES[0]
+    for show in VALID_SHOW_VALUES:
+        if show >= total:
+            return show
+    return VALID_SHOW_VALUES[-1]
+
+
+@dataclass(frozen=True)
+class ParsedSectionHeader:
+    section_date: str
+    section_date_iso: str
+    expected_total: int
+    continued: bool
+
+
+class _HeadingTextParser(HTMLParser):
+    def __init__(self, tag_name: str):
+        super().__init__(convert_charrefs=True)
+        self.tag_name = tag_name
+        self._depth = 0
+        self._current: list[str] = []
+        self.headings: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == self.tag_name:
+            if self._depth == 0:
+                self._current = []
+            self._depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != self.tag_name or self._depth <= 0:
+            return
+        self._depth -= 1
+        if self._depth == 0:
+            text = _normalize_header_text(" ".join(self._current))
+            if text:
+                self.headings.append(text)
+
+    def handle_data(self, data: str) -> None:
+        if self._depth > 0:
+            self._current.append(data)
+
+
+def _normalize_header_text(text: str) -> str:
+    text = unescape(text).replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _heading_texts(html: str, tag_name: str) -> list[str]:
+    parser = _HeadingTextParser(tag_name)
+    parser.feed(html)
+    return parser.headings
+
+
+def _parse_section_date(label: str) -> str | None:
+    normalized = re.sub(r",\s+0(\d)\s+", r", \1 ", label)
+    for fmt in ("%a, %d %b %Y", "%a, %b %d %Y"):
+        try:
+            return datetime.strptime(normalized, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def parse_latest_section_header(html: str) -> ParsedSectionHeader | None:
+    """Parse the latest date-section header from an arXiv ``/list/cs/recent`` page.
+
+    Expected pattern::
+
+        Fri, 5 Jun 2026 (showing first 50 of 798 entries)
+
+    Returns ``None`` if the header cannot be parsed.
+    """
+    for heading in _heading_texts(html, "h3") or [_normalize_header_text(html)]:
+        match = re.search(
+            r"([A-Z][a-z]{2},\s+\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{4})\s*"
+            r"\((?P<body>[^)]*?\bshowing\b[^)]*?\bof\s+(?P<total>\d+)\s+entries?)\s*\)",
+            heading,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        raw_label = _normalize_header_text(match.group(1))
+        section_date_iso = _parse_section_date(raw_label)
+        if not section_date_iso:
+            continue
+        label_dt = datetime.strptime(section_date_iso, "%Y-%m-%d")
+        section_date = f"{label_dt.strftime('%a')}, {label_dt.day} {label_dt.strftime('%b %Y')}"
+        body = match.group("body").lower()
+        return ParsedSectionHeader(
+            section_date=section_date,
+            section_date_iso=section_date_iso,
+            expected_total=int(match.group("total")),
+            continued="continued" in body,
+        )
+    return None
+
+
+def _find_section_boundaries(html: str) -> list[tuple[str, int, int]]:
+    """Return ``[(section_date, header_start, next_header_start), ...]``."""
+    boundaries: list[tuple[str, int, int]] = []
+    for m in re.finditer(
+        r"<h3[^>]*>\s*([A-Z][a-z]{2},\s+0?\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{4})",
+        html,
+    ):
+        header = parse_latest_section_header(html[m.start() : m.end() + 200])
+        section_date = header.section_date if header else re.sub(r"\s+", " ", m.group(1)).strip()
+        boundaries.append((section_date, m.start(), -1))
+    for i in range(len(boundaries)):
+        _, _, next_start = boundaries[i]
+        if next_start == -1:
+            if i + 1 < len(boundaries):
+                boundaries[i] = (boundaries[i][0], boundaries[i][1], boundaries[i + 1][1])
+            else:
+                boundaries[i] = (boundaries[i][0], boundaries[i][1], len(html))
+    return boundaries
+
+
+def _extract_papers_from_section(
+    html: str,
+    section_start: int,
+    section_end: int,
+    *,
+    paper_exists: Callable[[str], bool] | None = None,
+) -> list[PaperMetadata]:
+    """Parse arXiv list entries from a slice of HTML belonging to one section."""
+    from html import unescape
+
+    section_html = html[section_start:section_end]
+    papers: list[PaperMetadata] = []
+    seen_ids: set[str] = set()
+
+    pairs = re.findall(r"<dt>(.*?)</dt>\s*<dd>(.*?)</dd>", section_html, re.DOTALL | re.IGNORECASE)
+    for dt_html, dd_html in pairs:
+        id_match = re.search(r'href\s*=\s*["\']/abs/([^"\']+)["\']', dt_html)
+        if not id_match:
+            continue
+        arxiv_id = _normalize_arxiv_id(unescape(id_match.group(1)).strip())
+        if not arxiv_id or arxiv_id in seen_ids:
+            continue
+        if paper_exists and paper_exists(arxiv_id):
+            seen_ids.add(arxiv_id)
+            continue
+
+        title = _extract_list_title_static(dd_html)
+        categories_found = re.findall(r"\(([a-z-]+\.[A-Z]{2})\)", dd_html)
+        primary_category = categories_found[0] if categories_found else ""
+        seen_ids.add(arxiv_id)
+        papers.append(
+            PaperMetadata(
+                arxiv_id=arxiv_id,
+                title=title,
+                categories=categories_found,
+                primary_category=primary_category,
+                pdf_url=f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+                source="arxiv",
+            )
+        )
+
+    if not papers:
+        for arxiv_id in re.findall(r'href\s*=\s*["\']/abs/(\d+\.\d+(?:v\d+)?)["\']', section_html):
+            normalized = _normalize_arxiv_id(arxiv_id)
+            if normalized and normalized not in seen_ids:
+                if paper_exists and paper_exists(normalized):
+                    seen_ids.add(normalized)
+                    continue
+                seen_ids.add(normalized)
+                papers.append(
+                    PaperMetadata(
+                        arxiv_id=normalized,
+                        pdf_url=f"https://arxiv.org/pdf/{normalized}.pdf",
+                        source="arxiv",
+                    )
+                )
+
+    return papers
+
+
+def _extract_list_title_static(dd_html: str) -> str:
+    from html import unescape
+
+    match = re.search(r'<div class=["\']list-title[^"\']*["\']>(.*?)</div>', dd_html, re.DOTALL | re.IGNORECASE)
+    if not match:
+        return ""
+    title_html = re.sub(r'<span class=["\']descriptor["\']>\s*Title:\s*</span>', "", match.group(1), flags=re.I)
+    title_text = re.sub(r"<[^>]+>", " ", title_html)
+    return " ".join(unescape(title_text).split())
 
 
 class SemanticScholarClient:
@@ -195,9 +395,6 @@ class ArxivClient:
         *,
         paper_exists: Callable[[str], bool] | None = None,
     ) -> list[PaperMetadata]:
-        import re as _re
-        from html import unescape
-
         archive = self._archive_from_categories(categories)
         url = f"https://arxiv.org/list/{archive}/recent?skip=0&show={limit}"
 
@@ -205,54 +402,48 @@ class ArxivClient:
         resp = self._client.get(url, timeout=30)
         resp.raise_for_status()
 
-        papers: list[PaperMetadata] = []
-        seen_ids: set[str] = set()
+        return self._parse_entries_from_html(resp.text, paper_exists=paper_exists, archive=archive)
 
-        pairs = _re.findall(r"<dt>(.*?)</dt>\s*<dd>(.*?)</dd>", resp.text, _re.DOTALL | _re.IGNORECASE)
-        for dt_html, dd_html in pairs:
-            id_match = _re.search(r'href\s*=\s*["\']/abs/([^"\']+)["\']', dt_html)
-            if not id_match:
-                continue
-            arxiv_id = _normalize_arxiv_id(unescape(id_match.group(1)).strip())
-            if not arxiv_id or arxiv_id in seen_ids:
-                continue
-            if paper_exists and paper_exists(arxiv_id):
-                seen_ids.add(arxiv_id)
-                continue
-
-            title = self._extract_list_title(dd_html)
-            categories_found = _re.findall(r"\(([a-z-]+\.[A-Z]{2})\)", dd_html)
-            primary_category = categories_found[0] if categories_found else ""
-            seen_ids.add(arxiv_id)
-            papers.append(
-                PaperMetadata(
-                    arxiv_id=arxiv_id,
-                    title=title,
-                    categories=categories_found,
-                    primary_category=primary_category,
-                    pdf_url=f"https://arxiv.org/pdf/{arxiv_id}.pdf",
-                    source="arxiv",
-                )
-            )
-
-        if not papers:
-            for arxiv_id in _re.findall(r'href\s*=\s*["\']/abs/(\d+\.\d+(?:v\d+)?)["\']', resp.text):
-                normalized = _normalize_arxiv_id(arxiv_id)
-                if normalized and normalized not in seen_ids:
-                    if paper_exists and paper_exists(normalized):
-                        seen_ids.add(normalized)
-                        continue
-                    seen_ids.add(normalized)
-                    papers.append(
-                        PaperMetadata(
-                            arxiv_id=normalized,
-                            pdf_url=f"https://arxiv.org/pdf/{normalized}.pdf",
-                            source="arxiv",
-                        )
+    def _parse_entries_from_html(
+        self,
+        html: str,
+        *,
+        paper_exists: Callable[[str], bool] | None = None,
+        archive: str = "cs",
+        target_section: str | None = None,
+    ) -> list[PaperMetadata]:
+        if target_section is not None:
+            boundaries = _find_section_boundaries(html)
+            for section_date, start, end in boundaries:
+                if section_date == target_section:
+                    papers = _extract_papers_from_section(html, start, end, paper_exists=paper_exists)
+                    logger.info(
+                        "arXiv list page parsed %d papers for section %s in %s",
+                        len(papers),
+                        target_section,
+                        archive,
                     )
+                    return papers
+            return []
 
+        papers = _extract_papers_from_section(html, 0, len(html), paper_exists=paper_exists)
         logger.info("arXiv list page parsed %d papers for %s", len(papers), archive)
         return papers
+
+    def fetch_page_html(
+        self,
+        categories: list[str],
+        *,
+        show: int = 50,
+        skip: int = 0,
+    ) -> str:
+        """Fetch raw HTML for a recent-list page. Returns response text."""
+        archive = self._archive_from_categories(categories)
+        url = f"https://arxiv.org/list/{archive}/recent?skip={skip}&show={show}"
+        logger.info("arXiv list request: %s", url)
+        resp = self._client.get(url, timeout=30)
+        resp.raise_for_status()
+        return resp.text
 
     def _fetch_abs_metadata(self, list_papers: list[PaperMetadata], since_date: str) -> list[PaperMetadata]:
         papers: list[PaperMetadata] = []
@@ -297,15 +488,7 @@ class ArxivClient:
 
     @staticmethod
     def _extract_list_title(dd_html: str) -> str:
-        import re as _re
-        from html import unescape
-
-        match = _re.search(r'<div class=["\']list-title[^"\']*["\']>(.*?)</div>', dd_html, _re.DOTALL | _re.IGNORECASE)
-        if not match:
-            return ""
-        title_html = _re.sub(r'<span class=["\']descriptor["\']>\s*Title:\s*</span>', "", match.group(1), flags=_re.I)
-        title_text = _re.sub(r"<[^>]+>", " ", title_html)
-        return " ".join(unescape(title_text).split())
+        return _extract_list_title_static(dd_html)
 
     def _parse_abs_page(self, arxiv_id: str, html: str) -> PaperMetadata | None:
         """Parse an arXiv /abs/<id> HTML page into PaperMetadata."""

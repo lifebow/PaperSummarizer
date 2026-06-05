@@ -3,7 +3,15 @@ import unittest
 from pathlib import Path
 
 from paper_radar._http import ssl_context
-from paper_radar.retrieval import ArxivClient, HybridRetriever, PaperMetadata, PdfDownloader, SemanticScholarClient
+from paper_radar.retrieval import (
+    ArxivClient,
+    HybridRetriever,
+    PaperMetadata,
+    PdfDownloader,
+    SemanticScholarClient,
+    choose_allowed_show,
+    parse_latest_section_header,
+)
 
 
 class FakeResponse:
@@ -27,6 +35,120 @@ class FakeSession:
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_choose_allowed_show_uses_arxiv_valid_values(self):
+        cases = [
+            (25, 25),
+            (26, 50),
+            (50, 50),
+            (51, 100),
+            (100, 100),
+            (101, 250),
+            (250, 250),
+            (251, 500),
+            (500, 500),
+            (501, 1000),
+            (1000, 1000),
+            (1001, 2000),
+            (2000, 2000),
+            (2001, 2000),
+        ]
+
+        for total, expected_show in cases:
+            with self.subTest(total=total):
+                self.assertEqual(choose_allowed_show(total), expected_show)
+
+    def test_latest_section_header_parser_reads_date_and_expected_total(self):
+        html = """
+        <h3>Fri, 5 Jun 2026 (showing first 50 of 798 entries)</h3>
+        <dl></dl>
+        """
+
+        header = parse_latest_section_header(html)
+
+        self.assertIsNotNone(header)
+        self.assertEqual(header.section_date, "Fri, 5 Jun 2026")
+        self.assertEqual(header.section_date_iso, "2026-06-05")
+        self.assertEqual(header.expected_total, 798)
+        self.assertFalse(header.continued)
+
+    def test_latest_section_header_parser_handles_continued_and_range_headers(self):
+        cases = [
+            (
+                """
+                <h3>
+                  Fri, 5 Jun 2026
+                  (continued, showing 50 of 798 entries)
+                </h3>
+                """,
+                "Fri, 5 Jun 2026",
+                "2026-06-05",
+                798,
+                True,
+            ),
+            (
+                '<h3 class="list-title">Fri, 5 Jun 2026 (showing 1-50 of 798 entries)</h3>',
+                "Fri, 5 Jun 2026",
+                "2026-06-05",
+                798,
+                False,
+            ),
+            (
+                "<h3>Fri, 5 Jun 2026 (showing first 50 of 798 entries )</h3>",
+                "Fri, 5 Jun 2026",
+                "2026-06-05",
+                798,
+                False,
+            ),
+            (
+                "<h3>Fri, 05 Jun 2026&nbsp;(showing first 50 of 798 entries)</h3>",
+                "Fri, 5 Jun 2026",
+                "2026-06-05",
+                798,
+                False,
+            ),
+            (
+                "<h3>Mon, 1 Jun 2026 (continued, showing last 46 of 758 entries)</h3>",
+                "Mon, 1 Jun 2026",
+                "2026-06-01",
+                758,
+                True,
+            ),
+        ]
+
+        for html, expected_label, expected_iso, expected_total, continued in cases:
+            with self.subTest(html=html):
+                header = parse_latest_section_header(html)
+
+                self.assertIsNotNone(header)
+                self.assertEqual(header.section_date, expected_label)
+                self.assertEqual(header.section_date_iso, expected_iso)
+                self.assertEqual(header.expected_total, expected_total)
+                self.assertEqual(header.continued, continued)
+
+    def test_arxiv_list_parser_filters_only_target_date_section(self):
+        html = """
+        <h3>Fri, 5 Jun 2026 (showing first 3 of 3 entries)</h3>
+        <dl>
+          <dt><a href="/abs/2606.00001">arXiv:2606.00001</a></dt>
+          <dd><div class="list-title"><span class="descriptor">Title:</span>Latest One</div></dd>
+          <dt><a href="/abs/2606.00002">arXiv:2606.00002</a></dt>
+          <dd><div class="list-title"><span class="descriptor">Title:</span>Latest Two</div></dd>
+        </dl>
+        <h3>Thu, 4 Jun 2026 (showing first 2 of 2 entries)</h3>
+        <dl>
+          <dt><a href="/abs/2606.00003">arXiv:2606.00003</a></dt>
+          <dd><div class="list-title"><span class="descriptor">Title:</span>Older One</div></dd>
+        </dl>
+        """
+
+        papers = ArxivClient(client=FakeSession(html))._parse_entries_from_html(
+            html,
+            target_section="Fri, 5 Jun 2026",
+        )
+
+        self.assertEqual([paper.arxiv_id for paper in papers], ["2606.00001", "2606.00002"])
+        self.assertEqual([paper.title for paper in papers], ["Latest One", "Latest Two"])
+
     def test_semantic_scholar_rotates_keys_and_filters_non_arxiv(self):
         calls = []
 

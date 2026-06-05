@@ -1,9 +1,19 @@
 topics:
   categories: ["cs.AI", "cs.CL", "cs.CR", "cs.PF", "cs.SE", "cs.CV"]
   queries:
-    - "LLM agent"
     - "AI safety"
-    - "AI jailbreak"
+    - "AI alignment"
+    - "LLM safety"
+    - "LLM jailbreak"
+    - "jailbreak attack"
+    - "prompt injection"
+    - "prompt attack"
+    - "red teaming"
+    - "adversarial prompts"
+    - "safety guardrails"
+    - "model robustness"
+    - "harmful content mitigation"
+    - "constitutional AI"
 
 daemon:
   interval_minutes: 60

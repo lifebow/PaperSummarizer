@@ -276,6 +276,21 @@ class PaperRadarDb:
             )
             return int(cursor.rowcount)
 
+    def requeue_papers_published_on(self, published_date: str) -> int:
+        if not published_date:
+            return 0
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE papers
+                SET archive_status = 'queued', last_status = 'queued', last_error = ''
+                WHERE published_at LIKE ?
+                  AND archive_status IN ({",".join("?" * len(_COMPLETED_STATUSES))})
+                """,
+                (f"{published_date}%", *_COMPLETED_STATUSES),
+            )
+            return int(cursor.rowcount)
+
     def start_run(self) -> int:
         with self._connect() as conn:
             cursor = conn.execute("INSERT INTO runs (started_at) VALUES (?)", (now_utc_iso(),))
@@ -358,6 +373,13 @@ class PaperRadarDb:
             item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
             results.append(item)
         return results
+
+    def reset_results_for_digest_date(self, digest_date: str) -> int:
+        if not digest_date:
+            return 0
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM paper_results WHERE digest_date = ?", (digest_date,))
+            return int(cursor.rowcount)
 
     def was_recap_sent(self, digest_date: str) -> bool:
         with self._connect() as conn:

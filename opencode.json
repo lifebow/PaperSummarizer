@@ -31,7 +31,7 @@
     "implement": {
       "description": "Code implementation subagent. Edits source and test files as assigned by coordinator.",
       "mode": "subagent",
-      "model": "acbpro/glm-5.1",
+      "model": "acbpro/gpt-5.5",
       "permission": {
         "edit": "allow",
         "bash": "allow"

@@ -204,9 +204,10 @@ class BotServer:
         if self.radar_service:
             logger.info("Running initial crawl on startup...")
             try:
-                result = self.radar_service.run_once()
+                result = self.radar_service.run_startup_check()
                 logger.info(
-                    "Initial crawl done: found=%d accepted=%d errors=%d",
+                    "Startup check done: status=%s found=%d accepted=%d errors=%d",
+                    result.get("status", ""),
                     result.get("found_count", 0),
                     result.get("accepted_count", 0),
                     result.get("error_count", 0),
