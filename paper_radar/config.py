@@ -17,6 +17,7 @@ class DaemonConfig:
     interval_minutes: int = 60
     timezone: str = "Asia/Ho_Chi_Minh"
     daily_recap_time: str = "21:00"
+    daily_recap_times: list[str] = field(default_factory=lambda: ["11:00", "23:00"])
     first_run_lookback_hours: int = 48
     release_window_start: str = ""
     release_window_end: str = ""
@@ -113,6 +114,15 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
     telegram_token_env = str(telegram.get("bot_token_env", "TELEGRAM_BOT_TOKEN"))
     telegram_chat_env = str(telegram.get("chat_id_env", "TELEGRAM_CHAT_ID"))
 
+    _default_recap_times = ["11:00", "23:00"]
+    _daily_recap_times = daemon.get("daily_recap_times")
+    if isinstance(_daily_recap_times, list) and _daily_recap_times:
+        resolved_recap_times = [str(t) for t in _daily_recap_times]
+    elif "daily_recap_time" in daemon:
+        resolved_recap_times = [str(daemon["daily_recap_time"])]
+    else:
+        resolved_recap_times = _default_recap_times
+
     return AppConfig(
         topics=TopicConfig(
             categories=list(topics.get("categories", ["cs.AI"])),
@@ -122,6 +132,7 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
             interval_minutes=int(daemon.get("interval_minutes", 60)),
             timezone=str(daemon.get("timezone", "Asia/Ho_Chi_Minh")),
             daily_recap_time=str(daemon.get("daily_recap_time", "21:00")),
+            daily_recap_times=resolved_recap_times,
             first_run_lookback_hours=int(daemon.get("first_run_lookback_hours", 48)),
             release_window_start=str(daemon.get("release_window_start", "")),
             release_window_end=str(daemon.get("release_window_end", "")),

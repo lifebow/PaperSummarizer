@@ -89,6 +89,64 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.semantic_scholar.api_keys, ["env-key"])
 
+    def test_daily_recap_times_from_yaml_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.yaml").write_text(
+                'daemon:\n  daily_recap_times:\n    - "11:00"\n    - "23:00"\n',
+                encoding="utf-8",
+            )
+            (root / ".env").write_text("", encoding="utf-8")
+            config = load_config(root / "config.yaml", root / ".env")
+        self.assertEqual(config.daemon.daily_recap_times, ["11:00", "23:00"])
+
+    def test_daily_recap_times_falls_back_to_legacy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.yaml").write_text(
+                'daemon:\n  daily_recap_time: "21:00"\n',
+                encoding="utf-8",
+            )
+            (root / ".env").write_text("", encoding="utf-8")
+            config = load_config(root / "config.yaml", root / ".env")
+        self.assertEqual(config.daemon.daily_recap_times, ["21:00"])
+
+    def test_daily_recap_times_default_when_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.yaml").write_text(
+                "daemon:\n  daily_recap_times: []\n",
+                encoding="utf-8",
+            )
+            (root / ".env").write_text("", encoding="utf-8")
+            config = load_config(root / "config.yaml", root / ".env")
+        self.assertEqual(config.daemon.daily_recap_times, ["11:00", "23:00"])
+
+    def test_daily_recap_times_default_when_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.yaml").write_text("daemon:\n  interval_minutes: 60\n", encoding="utf-8")
+            (root / ".env").write_text("", encoding="utf-8")
+            config = load_config(root / "config.yaml", root / ".env")
+        self.assertEqual(config.daemon.daily_recap_times, ["11:00", "23:00"])
+
+    def test_daily_recap_times_inline_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.yaml").write_text(
+                'daemon:\n  daily_recap_times: ["09:00", "15:00", "21:00"]\n',
+                encoding="utf-8",
+            )
+            (root / ".env").write_text("", encoding="utf-8")
+            config = load_config(root / "config.yaml", root / ".env")
+        self.assertEqual(config.daemon.daily_recap_times, ["09:00", "15:00", "21:00"])
+
+    def test_dataclass_default_is_two_slots(self):
+        from paper_radar.config import DaemonConfig
+
+        cfg = DaemonConfig()
+        self.assertEqual(cfg.daily_recap_times, ["11:00", "23:00"])
+
 
 if __name__ == "__main__":
     unittest.main()

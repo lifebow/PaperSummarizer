@@ -625,7 +625,34 @@ class PaperRadarService:
     def watch(self) -> None:
         while True:
             self.run_once()
+            self._maybe_send_due_recaps()
             time.sleep(self.config.daemon.interval_minutes * 60)
+
+    def _maybe_send_due_recaps(self, now=None) -> None:
+        tz = self.config.daemon.timezone
+        local = now or local_now(tz)
+        digest_date = local.strftime("%Y-%m-%d")
+        current_hhmm = local.strftime("%H:%M")
+        self.db.initialize()
+        for slot in self.config.daemon.daily_recap_times:
+            if slot > current_hhmm:
+                continue
+            state_key = f"daily_recap_sent:{digest_date}:{slot}"
+            if self.db.get_state(state_key) is not None:
+                continue
+            papers = self.db.accepted_results_for_date(digest_date)
+            if papers:
+                try:
+                    for paper in papers:
+                        msg = render_paper_short(paper)
+                        if msg:
+                            keyboard = make_expand_keyboard(paper.get("arxiv_id", ""))
+                            self.telegram.send_message(msg, reply_markup=keyboard)
+                except Exception as exc:
+                    logger.warning("Recap slot %s send failed for %s: %s", slot, digest_date, exc)
+                    raise
+            self.db.set_state(state_key, "sent")
+            logger.info("Recap slot %s checked for %s (%d papers)", slot, digest_date, len(papers))
 
     def _enrich_author_affiliations(self, papers: list[Any]) -> None:
         """Fetch and cache author affiliations from S2 for all papers in batch."""

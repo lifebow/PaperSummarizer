@@ -677,6 +677,179 @@ class TelegramDaemonTests(unittest.TestCase):
 
         self.assertIsNone(state)
 
+    def _make_recap_service(self, db, recap_times=None):
+        from paper_radar.config import DaemonConfig
+
+        daemon_cfg = DaemonConfig(daily_recap_times=recap_times or ["11:00", "23:00"])
+        config = AppConfig(
+            telegram=TelegramConfig(bot_token="bot", chat_id="chat"),
+            daemon=daemon_cfg,
+        )
+        sent_messages = []
+
+        service = PaperRadarService(
+            config=config,
+            db=db,
+            telegram=type(
+                "FakeTelegram",
+                (),
+                {"send_message": lambda self, msg, **kwargs: sent_messages.append(msg)},
+            )(),
+        )
+        return service, sent_messages
+
+    def _seed_accepted_paper(self, db, digest_date="2026-06-05", arxiv_id="r1", title="Recap Paper"):
+        run_id = db.start_run()
+        paper_id = db.upsert_paper(
+            {"arxiv_id": arxiv_id, "title": title, "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}"}
+        )
+        db.record_result(
+            paper_id=paper_id,
+            run_id=run_id,
+            candidate_relevance_score=8,
+            extractor_name="primary",
+            extracted_text_chars=100,
+            summary={"what_the_paper_does": "work", "ideas_to_try": ["Try"]},
+            relevance_score=8,
+            grounding_score=8,
+            idea_score=7,
+            qa_reason="ok",
+            accepted=True,
+            digest_date=digest_date,
+        )
+
+    def test_recap_not_sent_before_first_slot(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            self._seed_accepted_paper(db)
+            service, sent_messages = self._make_recap_service(db)
+            before_11 = datetime(2026, 6, 5, 10, 59, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=before_11)
+            self.assertEqual(len(sent_messages), 0)
+            self.assertIsNone(db.get_state("daily_recap_sent:2026-06-05:11:00"))
+
+    def test_recap_sent_at_11_after_slot_time(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            self._seed_accepted_paper(db)
+            service, sent_messages = self._make_recap_service(db)
+            at_1108 = datetime(2026, 6, 5, 11, 8, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=at_1108)
+            self.assertTrue(len(sent_messages) >= 1)
+            self.assertEqual(db.get_state("daily_recap_sent:2026-06-05:11:00"), "sent")
+            self.assertIsNone(db.get_state("daily_recap_sent:2026-06-05:23:00"))
+
+    def test_recap_sends_both_slots_at_23(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            self._seed_accepted_paper(db)
+            service, sent_messages = self._make_recap_service(db)
+            at_2300 = datetime(2026, 6, 5, 23, 0, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=at_2300)
+            self.assertEqual(db.get_state("daily_recap_sent:2026-06-05:11:00"), "sent")
+            self.assertEqual(db.get_state("daily_recap_sent:2026-06-05:23:00"), "sent")
+            self.assertTrue(len(sent_messages) >= 2)
+
+    def test_recap_23_resends_even_if_11_sent(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            self._seed_accepted_paper(db)
+            service, sent_messages = self._make_recap_service(db)
+            at_1108 = datetime(2026, 6, 5, 11, 8, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=at_1108)
+            first_batch_count = len(sent_messages)
+            at_2305 = datetime(2026, 6, 5, 23, 5, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=at_2305)
+            self.assertTrue(len(sent_messages) > first_batch_count)
+
+    def test_recap_restart_does_not_resend_same_slot(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            self._seed_accepted_paper(db)
+            service, sent_messages = self._make_recap_service(db)
+            at_1115 = datetime(2026, 6, 5, 11, 15, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=at_1115)
+            first_count = len(sent_messages)
+            service._maybe_send_due_recaps(now=at_1115)
+            self.assertEqual(len(sent_messages), first_count)
+
+    def test_recap_no_papers_marks_slot_checked(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            service, sent_messages = self._make_recap_service(db)
+            at_1115 = datetime(2026, 6, 5, 11, 15, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=at_1115)
+            self.assertEqual(len(sent_messages), 0)
+            self.assertEqual(db.get_state("daily_recap_sent:2026-06-05:11:00"), "sent")
+
+    def test_recap_no_papers_does_not_mark_legacy_telegram_recaps(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            service, sent_messages = self._make_recap_service(db)
+            at_1115 = datetime(2026, 6, 5, 11, 15, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+            service._maybe_send_due_recaps(now=at_1115)
+            self.assertFalse(db.was_recap_sent("2026-06-05"))
+
+    def test_send_daily_recap_still_works_backward_compat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "radar.sqlite3")
+            db.initialize()
+            run_id = db.start_run()
+            paper_id = db.upsert_paper({"arxiv_id": "bc1", "title": "BC Paper", "pdf_url": "link"})
+            db.record_result(
+                paper_id=paper_id,
+                run_id=run_id,
+                candidate_relevance_score=8,
+                extractor_name="primary",
+                extracted_text_chars=100,
+                summary={"what_the_paper_does": "Does work", "ideas_to_try": ["Try"]},
+                relevance_score=8,
+                grounding_score=8,
+                idea_score=7,
+                qa_reason="ok",
+                accepted=True,
+                digest_date="2026-06-05",
+            )
+            service, _ = self._make_recap_service(db, recap_times=["21:00"])
+            sent = service.send_daily_recap("2026-06-05")
+        self.assertTrue(sent)
+
 
 if __name__ == "__main__":
     unittest.main()
