@@ -806,9 +806,11 @@ class PaperRadarService:
             extractor_name=data["extractor_name"],
             extracted_text_chars=data["extracted_text_chars"],
             summary=data["summary"],
-            relevance_score=float(data.get("qa", {}).get("relevance_score", 0)),
-            grounding_score=float(data.get("qa", {}).get("grounding_score", 0)),
-            idea_score=float(data.get("qa", {}).get("idea_score", 0)),
+            # Store the already-normalized 0-10 scores (data["*_score"]), not the
+            # raw model output in data["qa"] which may be on a 0-1 scale.
+            relevance_score=float(data.get("relevance_score", 0)),
+            grounding_score=float(data.get("grounding_score", 0)),
+            idea_score=float(data.get("idea_score", 0)),
             qa_reason=str(data.get("qa", {}).get("qa_reason", "")),
             accepted=data["accepted"],
             digest_date=data["digest_date"],
