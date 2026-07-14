@@ -495,24 +495,32 @@ class ArxivClient:
         import re as _re
         from html import unescape
 
-        def _match(pattern: str) -> str:
-            m = _re.search(pattern, html)
+        def _match(pattern: str, flags: int = 0) -> str:
+            m = _re.search(pattern, html, flags)
             return unescape(m.group(1)).strip() if m else ""
 
         title = _match(r'<meta name="citation_title" content="(.*?)"')
+        # Abstracts are multi-paragraph: arXiv splits them with "\n<br>" inside
+        # the blockquote, so the body span must match across newlines (DOTALL).
         abstract_raw = _match(
             r'<blockquote class="abstract[^"]*">\s*<span class="descriptor">Abstract:</span>\s*(.*?)\s*</blockquote>',
+            _re.DOTALL,
         )
-        abstract = abstract_raw.replace("<br>", " ").replace("\n", " ").strip()
+        abstract = _re.sub(r"<br\s*/?>", " ", abstract_raw).replace("\n", " ")
+        abstract = _re.sub(r"\s+", " ", abstract).strip()
         published = _match(r'<meta name="citation_date" content="(.*?)"')
         # Convert date format: "2026/06/03" -> "2026-06-03"
         published = published.replace("/", "-")
         authors_raw = _re.findall(r'<meta name="citation_author" content="(.*?)"', html)
-        categories_raw = _re.findall(r"subjects:\s*(.*?)</span>", html, _re.DOTALL)
 
+        # Subjects live in a table cell now; category codes are in parentheses,
+        # e.g. <span class="primary-subject">Machine Learning (cs.LG)</span>; ...
+        subjects_match = _re.search(
+            r'<td class="tablecell subjects">(.*?)</td>', html, _re.DOTALL | _re.IGNORECASE
+        )
         categories: list[str] = []
-        if categories_raw:
-            categories = [c.strip() for c in categories_raw[0].split(";") if c.strip()]
+        if subjects_match:
+            categories = _re.findall(r"\(([a-z\-]+\.[A-Z]{2})\)", subjects_match.group(1))
         primary_category = categories[0] if categories else ""
 
         if not title:

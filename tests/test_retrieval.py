@@ -271,6 +271,35 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(results[0].pdf_url, "https://arxiv.org/pdf/2606.00001.pdf")
         self.assertEqual(results[0].source, "arxiv")
 
+    def test_parse_abs_page_extracts_multiparagraph_abstract_and_subjects(self):
+        # Real arXiv /abs/ layout (2026): multi-paragraph abstract split by
+        # "\n<br>" inside the blockquote, and Subjects in a table cell.
+        abs_html = (
+            '<meta name="citation_title" content="Causal Minimal Tool Filtering">\n'
+            '<meta name="citation_date" content="2026/06/05">\n'
+            '<meta name="citation_author" content="Ada Lovelace">\n'
+            '<blockquote class="abstract mathjax">\n'
+            '            <span class="descriptor">Abstract:</span>First paragraph about tools.\n'
+            "<br>Second paragraph proposing CMTF.\n"
+            "    </blockquote>\n"
+            '<table summary="Additional metadata"><tr>\n'
+            '  <td class="tablecell label">Subjects:</td>\n'
+            '  <td class="tablecell subjects">\n'
+            '    <span class="primary-subject">Machine Learning (cs.LG)</span>; '
+            "Computation and Language (cs.CL)</td>\n"
+            "</tr></table>"
+        )
+
+        paper = ArxivClient()._parse_abs_page("2606.06284", abs_html)
+
+        self.assertIsNotNone(paper)
+        self.assertEqual(paper.title, "Causal Minimal Tool Filtering")
+        self.assertIn("First paragraph about tools.", paper.abstract)
+        self.assertIn("Second paragraph proposing CMTF.", paper.abstract)
+        self.assertEqual(paper.primary_category, "cs.LG")
+        self.assertIn("cs.LG", paper.categories)
+        self.assertIn("cs.CL", paper.categories)
+
     def test_arxiv_client_keeps_list_metadata_when_abs_page_fails(self):
         class FailingAbsSession(FakeSession):
             def get(self, url: str, *, timeout: int):
