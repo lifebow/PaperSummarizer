@@ -388,6 +388,25 @@ class PaperRadarDb:
             results.append(item)
         return results
 
+    def all_accepted_results(self) -> list[dict[str, Any]]:
+        """Minimal fields for every accepted paper (summary parsed), used for
+        cross-date aggregation such as per-day filter-set counts."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.title, p.abstract, r.summary_json, r.digest_date
+                FROM paper_results r
+                JOIN papers p ON p.id = r.paper_id
+                WHERE r.accepted = 1 AND r.digest_date != ''
+                """
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["summary"] = json.loads(item.pop("summary_json") or "{}")
+            results.append(item)
+        return results
+
     def reset_results_for_digest_date(self, digest_date: str) -> int:
         if not digest_date:
             return 0

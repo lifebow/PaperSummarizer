@@ -82,6 +82,14 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
         available = [d for d, _ in dates]
         selected_date = date or (available[0] if available else None)
 
+        # Per-day counts split by filter-set membership: how many papers match a
+        # configured set (e.g. AI Safety) vs the combined total (sets + Other).
+        set_counts_by_date: dict[str, int] = {}
+        for row in db.all_accepted_results():
+            if paper_filter_sets(row, filter_sets):
+                d = row["digest_date"]
+                set_counts_by_date[d] = set_counts_by_date.get(d, 0) + 1
+
         # tier 1: one concrete set, or "other", or None (= All)
         selected_set = set_filter if (set_filter in set_by_slug or set_filter == "other") else None
         # tier 2: keyword slugs (only meaningful inside a concrete set, but filter applies if present)
@@ -145,6 +153,7 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
             {
                 "date": d,
                 "count": n,
+                "set_count": set_counts_by_date.get(d, 0),
                 "active": d == selected_date,
                 "href": _href(d, selected_set, selected_kw),
             }
