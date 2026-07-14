@@ -192,7 +192,9 @@ def render_expanded_analysis(expansion: dict[str, Any], paper: dict[str, Any] | 
 
     HTML mode is used instead of Markdown so math notation in the analysis
     (subscripts like ``ns_p``, ``*``, ``[...]``, Greek letters) renders as
-    plain text instead of being swallowed by Markdown entities.
+    plain text instead of being swallowed by Markdown entities. Formula-heavy
+    sections are wrapped in a monospace ``<pre>`` block — the closest thing
+    Telegram offers to a math display, keeping symbols aligned and legible.
     """
     skeleton = expansion.get("skeleton", expansion)
     title = paper.get("title", "") if paper else ""
@@ -204,6 +206,10 @@ def render_expanded_analysis(expansion: dict[str, Any], paper: dict[str, Any] | 
     if arxiv_id:
         lines.append(f'🔗 <a href="https://arxiv.org/abs/{_esc(arxiv_id)}">{_esc(arxiv_id)}</a>')
     lines.append("")
+
+    # Sections rendered inside a monospace <pre> block so formulas read as a
+    # math display rather than mangled prose.
+    mono_keys = {"mathematical_framework"}
 
     sections = [
         ("📝 Deep Summary", "deep_summary"),
@@ -227,6 +233,10 @@ def render_expanded_analysis(expansion: dict[str, Any], paper: dict[str, Any] | 
             if isinstance(value, list):
                 lines.append(f"<b>{_esc(label)}</b>")
                 lines.extend(f"• {_esc(item)}" for item in value)
+                lines.append("")
+            elif key in mono_keys:
+                lines.append(f"<b>{_esc(label)}</b>")
+                lines.append(f"<pre>{_esc(value)}</pre>")
                 lines.append("")
             else:
                 lines.append(f"<b>{_esc(label)}</b>")

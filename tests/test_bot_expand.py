@@ -463,6 +463,9 @@ class TestRenderExpandedAnalysis(unittest.TestCase):
 
         # Bold section header via HTML, not Markdown asterisks.
         self.assertIn("<b>📐 Mathematical Framework</b>", result)
+        # Formula section is wrapped in a monospace block.
+        self.assertIn("<pre>", result)
+        self.assertIn("</pre>", result)
         # Subscripts and brackets survive verbatim (Markdown would mangle "_").
         self.assertIn("ns_p", result)
         self.assertIn("[ASR(prec,T) - ASR(FP16,T)]", result)
