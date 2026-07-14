@@ -711,7 +711,7 @@ class PaperRadarService:
 
                     if self.llm and budget.try_record_call():
                         try:
-                            qa = self.llm.qa(paper, summary, paper.abstract)
+                            qa = self.llm.qa(paper, summary, summary_text)
                         except Exception as exc:
                             logger.warning("QA failed for %s: %s", paper.arxiv_id, exc)
                             if _is_retryable_llm_error(exc):
@@ -828,16 +828,18 @@ class PaperRadarService:
         digest_date: str,
         batch_time: str,
     ) -> None:
-        """Send a short hourly scan notification to Telegram."""
-        parts = [f"📊 *{batch_time}* — "]
+        """Send a scan notification to Telegram, only when new papers appeared.
+
+        Quiet hours (no new papers discovered) send nothing so the channel
+        isn't pinged every hour with "Không có paper mới".
+        """
         if found_count == 0:
-            parts.append("Không có paper mới.")
-        else:
-            parts.append(f"{found_count} paper mới")
-            if accepted_count > 0:
-                parts.append(f", *{accepted_count} match* ✅")
-            if error_count > 0:
-                parts.append(f", {error_count} lỗi")
+            return
+        parts = [f"📊 *{batch_time}* — ", f"{found_count} paper mới"]
+        if accepted_count > 0:
+            parts.append(f", *{accepted_count} match* ✅")
+        if error_count > 0:
+            parts.append(f", {error_count} lỗi")
         msg = "".join(parts)
         try:
             self.telegram.send_message(msg)

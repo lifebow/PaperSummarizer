@@ -124,6 +124,8 @@ class TelegramDaemonTests(unittest.TestCase):
                     return ExtractedText(text="full text " * 50, extractor_name="primary")
 
             class FakeLlm:
+                qa_full_text = ""
+
                 def relevance(self, paper, topics):
                     return {"relevance_score": 8, "reason": "relevant"}
 
@@ -140,6 +142,7 @@ class TelegramDaemonTests(unittest.TestCase):
                     }
 
                 def qa(self, paper, summary, full_text):
+                    self.qa_full_text = full_text
                     return {
                         "relevance_score": 8,
                         "grounding_score": 8,
@@ -172,6 +175,7 @@ class TelegramDaemonTests(unittest.TestCase):
         self.assertFalse(downloaded_pdf.exists())
         self.assertTrue(len(sent_messages) >= 1)
         self.assertTrue(any("match" in m for m in sent_messages))
+        self.assertIn("full text", service.llm.qa_full_text)
 
     def test_run_once_drains_multiple_queue_batches_in_same_run(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -316,7 +320,7 @@ class TelegramDaemonTests(unittest.TestCase):
         self.assertIn("15 paper mới", sent_messages[0])
         self.assertIn("3 match", sent_messages[0])
 
-    def test_send_scan_notification_zero_papers(self):
+    def test_send_scan_notification_zero_papers_is_silent(self):
         sent_messages = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -333,8 +337,8 @@ class TelegramDaemonTests(unittest.TestCase):
             )
             service.send_scan_notification(0, 0, 0, "2026-06-04", "10:00")
 
-        self.assertEqual(len(sent_messages), 1)
-        self.assertIn("Không có paper mới", sent_messages[0])
+        # No new papers -> no notification at all.
+        self.assertEqual(sent_messages, [])
 
     def test_send_scan_notification_with_errors(self):
         sent_messages = []
