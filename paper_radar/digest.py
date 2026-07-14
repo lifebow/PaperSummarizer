@@ -1,12 +1,50 @@
 from __future__ import annotations
 
+import re
+from html import escape as _html_escape
 from pathlib import Path
 from typing import Any
+
+# Enumerator prefixes the LLM uses inside a single ideas_to_try string,
+# e.g. "1. ... 2. ..." or "A. ... B. ...".
+_ENUM_SPLIT_RE = re.compile(r"(?:^|\s)(?:\d{1,2}[.)]|[A-Z][.)])\s+")
+_ENUM_PREFIX_RE = re.compile(r"^\s*(?:\d{1,2}[.)]|[A-Z][.)])\s*")
+
+
+def _normalize_ideas(value: Any) -> list[str]:
+    """Coerce ``ideas_to_try`` into a clean list of single-line ideas.
+
+    The LLM sometimes returns a list, but often a single enumerated string
+    like "1. Foo 2. Bar". Indexing ``[0]`` on such a string yields the first
+    character ("1"), so callers must normalize first.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        raw = text.split("\n") if "\n" in text else _ENUM_SPLIT_RE.split(text)
+    elif isinstance(value, list):
+        raw = [str(item) for item in value]
+    else:
+        return []
+
+    cleaned: list[str] = []
+    for item in raw:
+        item = _ENUM_PREFIX_RE.sub("", item)
+        item = re.sub(r"\s+", " ", item).strip()
+        if item:
+            cleaned.append(item)
+    return cleaned
+
+
+def _esc(value: Any) -> str:
+    """Escape text for Telegram HTML parse mode (&, <, > only)."""
+    return _html_escape(str(value), quote=False)
 
 
 def render_paper_markdown(paper: dict[str, Any]) -> str:
     summary = paper.get("summary", {})
-    ideas = summary.get("ideas_to_try", [])
+    ideas = _normalize_ideas(summary.get("ideas_to_try"))
     qa_scores = summary.get("qa_scores", {})
     lines = [
         f"### {paper.get('title', 'Untitled')}",
@@ -78,7 +116,7 @@ def append_digest_batch(digest_dir: Path, digest_date: str, batch_time: str, pap
 
 def render_paper_short(paper: dict[str, Any]) -> str:
     summary = paper.get("summary", {})
-    ideas = summary.get("ideas_to_try") or []
+    ideas = _normalize_ideas(summary.get("ideas_to_try"))
     idea = ideas[0] if ideas else ""
     link = paper.get("pdf_url") or f"https://arxiv.org/abs/{paper.get('arxiv_id', '')}"
     why = summary.get("what_the_paper_does", "")
@@ -150,16 +188,21 @@ def _qa_line(paper: dict[str, Any], qa_scores: dict[str, Any]) -> str:
 
 
 def render_expanded_analysis(expansion: dict[str, Any], paper: dict[str, Any] | None = None) -> str:
-    """Render expanded analysis for Telegram."""
+    """Render expanded analysis for Telegram (HTML parse mode).
+
+    HTML mode is used instead of Markdown so math notation in the analysis
+    (subscripts like ``ns_p``, ``*``, ``[...]``, Greek letters) renders as
+    plain text instead of being swallowed by Markdown entities.
+    """
     skeleton = expansion.get("skeleton", expansion)
     title = paper.get("title", "") if paper else ""
     arxiv_id = paper.get("arxiv_id", "") if paper else expansion.get("arxiv_id", "")
 
     lines: list[str] = []
     if title:
-        lines.append(f"🔬 *Expanded: {title}*")
+        lines.append(f"🔬 <b>Expanded: {_esc(title)}</b>")
     if arxiv_id:
-        lines.append(f"🔗 [{arxiv_id}](https://arxiv.org/abs/{arxiv_id})")
+        lines.append(f'🔗 <a href="https://arxiv.org/abs/{_esc(arxiv_id)}">{_esc(arxiv_id)}</a>')
     lines.append("")
 
     sections = [
@@ -182,12 +225,12 @@ def render_expanded_analysis(expansion: dict[str, Any], paper: dict[str, Any] | 
         value = skeleton.get(key, "")
         if value:
             if isinstance(value, list):
-                lines.append(f"*{label}*")
-                lines.extend(f"• {item}" for item in value)
+                lines.append(f"<b>{_esc(label)}</b>")
+                lines.extend(f"• {_esc(item)}" for item in value)
                 lines.append("")
             else:
-                lines.append(f"*{label}*")
-                lines.append(str(value))
+                lines.append(f"<b>{_esc(label)}</b>")
+                lines.append(_esc(value))
                 lines.append("")
 
     return "\n".join(lines)

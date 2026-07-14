@@ -9,7 +9,7 @@ from typing import Any
 
 from .config import AppConfig
 from .db import PaperRadarDb
-from .digest import render_expanded_analysis
+from .digest import _esc, render_expanded_analysis
 from .enrichment import download_pdf
 from .extraction import extract_introduction, extract_text_from_pdf_bytes
 from .llm import LlmClient, build_expand_prompt
@@ -119,13 +119,13 @@ class ExpandPipeline:
             affiliations = paper.get("author_affiliations") or []
             if affiliations:
                 unique_affs = list(dict.fromkeys(affiliations))
-                aff_text = f"\nAffiliations: {', '.join(unique_affs[:5])}\n"
+                aff_text = f"\nAffiliations: {_esc(', '.join(unique_affs[:5]))}\n"
                 lines = text.split("\n")
                 lines.insert(2, aff_text)
                 text = "\n".join(lines)
-        # Strip Markdown — LLM-generated content may break Telegram Markdown.
-        # Send as plain text (no parse_mode) for reliability.
-        self.telegram.send_long_message(text, chat_id=chat_id, parse_mode=None)
+        # HTML parse mode: bold headers render, and math notation in the
+        # analysis (underscores, brackets, asterisks) stays literal.
+        self.telegram.send_long_message(text, chat_id=chat_id, parse_mode="HTML")
 
 
 class WebhookHandler(BaseHTTPRequestHandler):

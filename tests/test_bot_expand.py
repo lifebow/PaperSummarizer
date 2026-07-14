@@ -23,7 +23,12 @@ from unittest.mock import MagicMock, patch
 from paper_radar.bot import BotServer, ExpandPipeline
 from paper_radar.config import BotConfig, load_config
 from paper_radar.db import PaperRadarDb
-from paper_radar.digest import render_expanded_analysis, render_paper_markdown, render_paper_short
+from paper_radar.digest import (
+    _normalize_ideas,
+    render_expanded_analysis,
+    render_paper_markdown,
+    render_paper_short,
+)
 from paper_radar.llm import build_expand_prompt
 from paper_radar.telegram import (
     TelegramSender,
@@ -367,7 +372,7 @@ class TestRenderExpandedAnalysis(unittest.TestCase):
         paper = {"title": "Test Paper", "arxiv_id": "2606.03988"}
         result = render_expanded_analysis(expansion, paper=paper)
 
-        self.assertIn("🔬 *Expanded: Test Paper*", result)
+        self.assertIn("🔬 <b>Expanded: Test Paper</b>", result)
         self.assertIn("2606.03988", result)
         self.assertIn("A deep summary", result)
         self.assertIn("Main contribution", result)
@@ -432,7 +437,7 @@ class TestRenderExpandedAnalysis(unittest.TestCase):
             "Key Contribution",
             "Methodology Detail",
             "Mathematical Framework",
-            "Experiments & Results",
+            "Experiments",
             "Strengths",
             "Weaknesses",
             "Reproducibility",
@@ -443,6 +448,62 @@ class TestRenderExpandedAnalysis(unittest.TestCase):
         ]
         for label in labels:
             self.assertIn(label, result, f"Missing section: {label}")
+
+    def test_html_mode_preserves_math_and_escapes(self):
+        """HTML rendering keeps math notation literal and escapes &, <, >."""
+        expansion = {
+            "skeleton": {
+                "mathematical_framework": (
+                    "RR = (1/P) Sum 1[ns_p > nu_p], ASR = 1 - RR; "
+                    "CDI(prec,T) = [ASR(prec,T) - ASR(FP16,T)] where T & T0 differ"
+                ),
+            },
+        }
+        result = render_expanded_analysis(expansion)
+
+        # Bold section header via HTML, not Markdown asterisks.
+        self.assertIn("<b>📐 Mathematical Framework</b>", result)
+        # Subscripts and brackets survive verbatim (Markdown would mangle "_").
+        self.assertIn("ns_p", result)
+        self.assertIn("[ASR(prec,T) - ASR(FP16,T)]", result)
+        # Reserved HTML chars are escaped so Telegram parses (renders back to >, &).
+        self.assertIn("ns_p &gt; nu_p", result)
+        self.assertIn("T &amp; T0", result)
+        self.assertNotIn("*", result)
+
+
+class TestNormalizeIdeas(unittest.TestCase):
+    """ideas_to_try may arrive as a list or an enumerated string."""
+
+    def test_list_passthrough(self):
+        self.assertEqual(_normalize_ideas(["Foo", " Bar "]), ["Foo", "Bar"])
+
+    def test_numbered_string_is_split(self):
+        ideas = _normalize_ideas("1. Transfer module to agents. 2. Vary slot count. 3. Replace layer.")
+        self.assertEqual(ideas[0], "Transfer module to agents.")
+        self.assertEqual(len(ideas), 3)
+
+    def test_lettered_multiline_string_is_split(self):
+        ideas = _normalize_ideas("A. First idea\nB. Second idea")
+        self.assertEqual(ideas, ["First idea", "Second idea"])
+
+    def test_plain_string_becomes_single_idea(self):
+        self.assertEqual(_normalize_ideas("Just one idea."), ["Just one idea."])
+
+    def test_empty_and_non_str(self):
+        self.assertEqual(_normalize_ideas(""), [])
+        self.assertEqual(_normalize_ideas(None), [])
+
+    def test_render_paper_short_shows_full_first_idea_from_string(self):
+        """Regression: a string ideas_to_try must not yield just "1"/"A"."""
+        paper = {
+            "title": "T",
+            "arxiv_id": "2606.00001",
+            "summary": {"ideas_to_try": "1. Transfer module to agents. 2. Vary slot count."},
+        }
+        short = render_paper_short(paper)
+        self.assertIn("💡 *Idea:* Transfer module to agents.", short)
+        self.assertNotIn("💡 *Idea:* 1", short)
 
 
 class TestExpandPipeline(unittest.TestCase):
