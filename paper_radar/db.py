@@ -364,6 +364,18 @@ class PaperRadarDb:
             ).fetchall()
         return [(row["digest_date"], int(row["n"])) for row in rows]
 
+    @staticmethod
+    def _hydrate_result_row(row: Any) -> dict[str, Any]:
+        """Turn a paper_results+papers join row into a paper dict with the JSON
+        blob columns decoded (summary, authors, categories, affiliations)."""
+        item = dict(row)
+        item["summary"] = json.loads(item.pop("summary_json") or "{}")
+        item["authors"] = json.loads(item.get("authors_json") or "[]")
+        item["categories"] = json.loads(item.get("categories_json") or "[]")
+        item["author_affiliations"] = json.loads(item.get("author_affiliations_json") or "[]")
+        item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
+        return item
+
     def accepted_results_for_date(self, digest_date: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -377,16 +389,7 @@ class PaperRadarDb:
                 """,
                 (digest_date,),
             ).fetchall()
-        results: list[dict[str, Any]] = []
-        for row in rows:
-            item = dict(row)
-            item["summary"] = json.loads(item.pop("summary_json") or "{}")
-            item["authors"] = json.loads(item.get("authors_json") or "[]")
-            item["categories"] = json.loads(item.get("categories_json") or "[]")
-            item["author_affiliations"] = json.loads(item.get("author_affiliations_json") or "[]")
-            item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
-            results.append(item)
-        return results
+        return [self._hydrate_result_row(row) for row in rows]
 
     def search_accepted(self, query: str, *, limit: int = 200) -> list[dict[str, Any]]:
         """Accepted papers whose title or abstract match *query* (case-insensitive),
@@ -406,16 +409,7 @@ class PaperRadarDb:
                 """,
                 (like, like, limit),
             ).fetchall()
-        results: list[dict[str, Any]] = []
-        for row in rows:
-            item = dict(row)
-            item["summary"] = json.loads(item.pop("summary_json") or "{}")
-            item["authors"] = json.loads(item.get("authors_json") or "[]")
-            item["categories"] = json.loads(item.get("categories_json") or "[]")
-            item["author_affiliations"] = json.loads(item.get("author_affiliations_json") or "[]")
-            item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
-            results.append(item)
-        return results
+        return [self._hydrate_result_row(row) for row in rows]
 
     def all_accepted_results(self) -> list[dict[str, Any]]:
         """Minimal fields for every accepted paper (summary parsed), used for
