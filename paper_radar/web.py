@@ -77,10 +77,13 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
         date: str | None = None,
         set_filter: str | None = Query(None, alias="set"),
         topics: str | None = None,
+        q: str | None = None,
     ) -> Any:
+        query = (q or "").strip()
         dates = db.dates_with_accepted_results()
         available = [d for d, _ in dates]
-        selected_date = date or (available[0] if available else None)
+        # A search spans all dates, so no single day is selected.
+        selected_date = None if query else (date or (available[0] if available else None))
 
         # Per-day counts split by filter-set membership: how many papers match a
         # configured set (e.g. AI Safety) vs the combined total (sets + Other).
@@ -95,7 +98,10 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
         # tier 2: keyword slugs (only meaningful inside a concrete set, but filter applies if present)
         selected_kw = [s for s in (topics.split(",") if topics else []) if s in known_kw_slugs]
 
-        papers = db.accepted_results_for_date(selected_date) if selected_date else []
+        if query:
+            papers = db.search_accepted(query)
+        else:
+            papers = db.accepted_results_for_date(selected_date) if selected_date else []
         for paper in papers:
             summary = paper.get("summary") or {}
             paper["topics"] = [(label, topic_slug(label)) for label in tag_paper(paper, queries)]
@@ -169,6 +175,7 @@ def create_app(db: PaperRadarDb, filter_sets: list[Any]) -> FastAPI:
                 "set_links": set_links,
                 "keyword_links": keyword_links,
                 "papers": papers,
+                "search_query": query,
             },
         )
 

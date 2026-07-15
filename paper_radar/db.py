@@ -388,6 +388,35 @@ class PaperRadarDb:
             results.append(item)
         return results
 
+    def search_accepted(self, query: str, *, limit: int = 200) -> list[dict[str, Any]]:
+        """Accepted papers whose title or abstract match *query* (case-insensitive),
+        newest publish date first. Same hydrated shape as accepted_results_for_date."""
+        like = f"%{query}%"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.*, r.summary_json, r.relevance_score, r.grounding_score,
+                       r.idea_score, r.qa_reason, r.digest_date
+                FROM paper_results r
+                JOIN papers p ON p.id = r.paper_id
+                WHERE r.accepted = 1 AND (p.title LIKE ? OR p.abstract LIKE ?)
+                GROUP BY p.id
+                ORDER BY p.published_at DESC, r.idea_score DESC
+                LIMIT ?
+                """,
+                (like, like, limit),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["summary"] = json.loads(item.pop("summary_json") or "{}")
+            item["authors"] = json.loads(item.get("authors_json") or "[]")
+            item["categories"] = json.loads(item.get("categories_json") or "[]")
+            item["author_affiliations"] = json.loads(item.get("author_affiliations_json") or "[]")
+            item["author_s2_ids"] = json.loads(item.get("author_s2_ids_json") or "[]")
+            results.append(item)
+        return results
+
     def all_accepted_results(self) -> list[dict[str, Any]]:
         """Minimal fields for every accepted paper (summary parsed), used for
         cross-date aggregation such as per-day filter-set counts."""

@@ -113,6 +113,28 @@ class WebRouteTests(unittest.TestCase):
         self.assertIn("Newest Paper", resp.text)
         self.assertNotIn("Older Paper", resp.text)
 
+    def test_search_matches_title_across_all_dates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            # older day, matches; newer day, does not
+            _seed_accepted(db, "2606.00001", "A jailbreak attack study", "2026-06-04")
+            _seed_accepted(db, "2606.00002", "Unrelated topic", "2026-06-05")
+            resp = _client(db, ["ai safety"]).get("/", params={"q": "jailbreak"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("A jailbreak attack study", resp.text)
+        self.assertNotIn("Unrelated topic", resp.text)
+        self.assertIn("kết quả cho", resp.text)
+
+    def test_search_no_results_shows_empty_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            _seed_accepted(db, "2606.00001", "Some paper", "2026-06-04")
+            resp = _client(db, ["ai safety"]).get("/", params={"q": "zzzznomatch"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Không có kết quả", resp.text)
+
     def test_date_shows_separate_set_and_total_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
