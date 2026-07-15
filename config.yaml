@@ -42,6 +42,7 @@ pipeline:
   max_papers_per_run: 200
   max_llm_calls_per_run: 0
   max_summary_candidates_per_run: 20
+  hydrate_metadata_per_run: 1000
   enable_relevance_cache: true
   merge_summary_qa: false
 

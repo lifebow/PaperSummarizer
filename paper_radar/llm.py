@@ -141,10 +141,16 @@ def build_summary_qa_prompt(
 
 
 def build_qa_prompt(summary: dict[str, Any], abstract: str, full_text_markdown: str) -> tuple[str, str]:
-    system = "You are a QA judge. Check relevance, grounding, and idea quality. Return strict JSON."
+    system = (
+        "You are a QA judge. Check relevance, grounding, and idea quality. "
+        "Return strict JSON. Scores must be numbers from 0-10, where 10 is best."
+    )
     user = json.dumps(
         {
-            "task": "Return relevance_score, grounding_score, idea_score, qa_reason, evidence_snippets.",
+            "task": (
+                "Return relevance_score, grounding_score, idea_score, qa_reason, evidence_snippets. "
+                "Use a 0-10 scale for every score."
+            ),
             "summary": summary,
             "abstract": abstract,
             "full_text_markdown": _truncate(full_text_markdown),

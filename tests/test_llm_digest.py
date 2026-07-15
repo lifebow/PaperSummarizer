@@ -5,7 +5,7 @@ from pathlib import Path
 
 from paper_radar._http import ssl_context
 from paper_radar.digest import append_digest_batch, render_paper_markdown
-from paper_radar.llm import LlmClient, _extract_json_object, passes_quality_gate
+from paper_radar.llm import LlmClient, _extract_json_object, build_qa_prompt, passes_quality_gate
 
 
 class LlmDigestTests(unittest.TestCase):
@@ -34,6 +34,12 @@ class LlmDigestTests(unittest.TestCase):
     def test_quality_gate_normalizes_zero_to_one_scores(self):
         self.assertTrue(passes_quality_gate({"relevance_score": 0.9, "grounding_score": 0.8, "idea_score": 0.7}))
         self.assertFalse(passes_quality_gate({"relevance_score": 0.9, "grounding_score": 0.5, "idea_score": 0.7}))
+
+    def test_qa_prompt_requires_zero_to_ten_scores(self):
+        system, user = build_qa_prompt({"what_the_paper_does": "x"}, "abstract", "full text")
+
+        self.assertIn("0-10", system)
+        self.assertIn("0-10 scale", user)
 
     def test_extracts_json_from_fenced_model_response(self):
         text = '```json\n{"relevance_score": 8, "reason": "good"}\n```'
