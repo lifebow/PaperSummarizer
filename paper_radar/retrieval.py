@@ -515,9 +515,7 @@ class ArxivClient:
 
         # Subjects live in a table cell now; category codes are in parentheses,
         # e.g. <span class="primary-subject">Machine Learning (cs.LG)</span>; ...
-        subjects_match = _re.search(
-            r'<td class="tablecell subjects">(.*?)</td>', html, _re.DOTALL | _re.IGNORECASE
-        )
+        subjects_match = _re.search(r'<td class="tablecell subjects">(.*?)</td>', html, _re.DOTALL | _re.IGNORECASE)
         categories: list[str] = []
         if subjects_match:
             categories = _re.findall(r"\(([a-z\-]+\.[A-Z]{2})\)", subjects_match.group(1))
