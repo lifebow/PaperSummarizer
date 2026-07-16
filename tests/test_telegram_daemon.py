@@ -420,6 +420,71 @@ class TelegramDaemonTests(unittest.TestCase):
         self.assertEqual(len(sent_messages), 1)
         self.assertIn("Paper", sent_messages[0])
 
+    def test_run_once_buckets_result_by_publish_date_not_run_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = PaperRadarDb(root / "data" / "radar.sqlite3")
+            config = AppConfig(
+                topics=TopicConfig(categories=["cs.AI"], queries=["LLM agent"]),
+                filters=FilterConfig(max_papers_per_batch=5),
+                paths=PathConfig(
+                    database=root / "data" / "radar.sqlite3",
+                    tmp_pdfs=root / "data" / "tmp_pdfs",
+                    digests=root / "digests",
+                ),
+            )
+            db.initialize()
+            # Published in May, queued today (backfill scenario) — goes straight
+            # to the drain queue, preserving published_at like the real crawl.
+            db.upsert_paper(
+                {
+                    "arxiv_id": "2605.99999",
+                    "title": "Agent Safety",
+                    "abstract": "abstract",
+                    "pdf_url": "pdf",
+                    "published_at": "2026-05-10",
+                    "archive_status": "queued",
+                }
+            )
+
+            class FakeDownloader:
+                def download(self, paper, tmp_dir):
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+                    p = tmp_dir / "2605.99999.pdf"
+                    p.write_bytes(b"%PDF")
+                    return p
+
+            class FakeExtractor:
+                def extract(self, path):
+                    return ExtractedText(text="full text " * 50, extractor_name="primary")
+
+            class FakeLlm:
+                def relevance(self, paper, topics):
+                    return {"relevance_score": 8, "reason": "relevant"}
+
+                def summarize(self, paper, full_text):
+                    return {"what_the_paper_does": "Studies safety.", "ideas_to_try": ["Try"]}
+
+                def qa(self, paper, summary, full_text):
+                    return {"relevance_score": 8, "grounding_score": 8, "idea_score": 7, "qa_reason": "good"}
+
+            service = PaperRadarService(
+                config=config,
+                db=db,
+                downloader=FakeDownloader(),
+                extractor=FakeExtractor(),
+                llm=FakeLlm(),
+                telegram=type("T", (), {"send_message": lambda self, *a, **k: None})(),
+                arxiv_client=_fake_arxiv_client([]),
+            )
+            service.run_once(now_date="2026-07-15", now_time="15:00")
+
+            may = db.accepted_results_for_date("2026-05-10")
+            july = db.accepted_results_for_date("2026-07-15")
+
+        self.assertEqual([p["arxiv_id"] for p in may], ["2605.99999"])
+        self.assertEqual(july, [])
+
     def test_hourly_full_first_of_day_marks_state_and_sends_all(self):
         sent_messages = []
         with tempfile.TemporaryDirectory() as tmp:

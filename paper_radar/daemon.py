@@ -753,7 +753,10 @@ class PaperRadarService:
                         "idea_score": normalize_score(qa.get("idea_score", 0)),
                         "paper_id": paper_id,
                         "run_id": run_id,
-                        "digest_date": digest_date,
+                        # Bucket by the paper's own publish day so backfilled /
+                        # historical papers land under their real date on the web
+                        # instead of the day they happened to be processed.
+                        "digest_date": (paper.published_at[:10] if paper.published_at else digest_date),
                         "candidate_relevance": float(relevance.get("relevance_score", 0)),
                         "extractor_name": extracted.extractor_name,
                         "extracted_text_chars": len(extracted.text),
