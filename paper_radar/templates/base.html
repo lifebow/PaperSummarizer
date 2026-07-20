@@ -20,17 +20,63 @@
       try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch (e) {}
     }
   </script>
+  <style>
+    /* "The Ledger" design tokens — flip light -> dark via the .dark selector. */
+    :root {
+      --bg: #f6f2e8;
+      --ink: #1b1815;
+      --sub: #736c5e;
+      --rule: rgba(27, 24, 21, 0.15);
+      --accent: #8a2b2b;
+      --org: #3d6673;
+      --idea-bg: rgba(138, 43, 43, 0.06);
+    }
+    .dark {
+      --bg: #161310;
+      --ink: #ece5d5;
+      --sub: #9c937f;
+      --rule: rgba(236, 229, 213, 0.16);
+      --accent: #df8f6a;
+      --org: #79aab5;
+      --idea-bg: rgba(223, 143, 106, 0.10);
+    }
+    /* Expanded-details entrance (spec motion). */
+    @keyframes ledgerDetail { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    details[open] > .ledger-detail { animation: ledgerDetail 0.25s ease; }
+    /* Native <details> marker off — the button styling carries the affordance. */
+    summary.ledger-summary { list-style: none; }
+    summary.ledger-summary::-webkit-details-marker { display: none; }
+    details[open] summary .ledger-more { display: none; }
+    details:not([open]) summary .ledger-less { display: none; }
+  </style>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
-      theme: { extend: { fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'] } } },
+      theme: {
+        extend: {
+          colors: {
+            bg: 'var(--bg)',
+            ink: 'var(--ink)',
+            sub: 'var(--sub)',
+            rule: 'var(--rule)',
+            accent: 'var(--accent)',
+            org: 'var(--org)',
+            ideabg: 'var(--idea-bg)',
+          },
+          fontFamily: {
+            serif: ['Newsreader', 'Georgia', 'ui-serif', 'serif'],
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+        },
+      },
     };
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,400..600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 </head>
-<body class="min-h-screen bg-white font-sans text-zinc-800 antialiased dark:bg-zinc-950 dark:text-zinc-200">
+<body class="min-h-screen bg-bg font-serif text-ink antialiased">
   {% block content %}{% endblock %}
 </body>
 </html>

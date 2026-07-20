@@ -101,6 +101,82 @@ class NormalizeIdeasTests(unittest.TestCase):
         self.assertTrue(all(len(item) > 1 for item in result))
 
 
+class MastheadDateTests(unittest.TestCase):
+    def setUp(self):
+        from paper_radar.web import masthead_date
+
+        self.fmt = masthead_date
+
+    def test_formats_weekday_and_date(self):
+        # 2026-06-06 is a Saturday.
+        self.assertEqual(self.fmt("2026-06-06"), "Sat · 2026-06-06")
+
+    def test_truncates_datetime_to_day(self):
+        self.assertEqual(self.fmt("2026-06-06T12:30:00Z"), "Sat · 2026-06-06")
+
+    def test_none_and_empty_yield_empty_string(self):
+        self.assertEqual(self.fmt(None), "")
+        self.assertEqual(self.fmt(""), "")
+
+    def test_unparseable_falls_back_to_raw(self):
+        self.assertEqual(self.fmt("not-a-date"), "not-a-date")
+
+
+class MonthLabelTests(unittest.TestCase):
+    def setUp(self):
+        from paper_radar.web import month_label
+
+        self.label = month_label
+
+    def test_formats_month_and_short_year(self):
+        self.assertEqual(self.label("2026-07"), "JUL '26")
+        self.assertEqual(self.label("2025-12"), "DEC '25")
+
+    def test_unparseable_falls_back_to_raw(self):
+        self.assertEqual(self.label("nope"), "nope")
+
+
+class MonthNavigatorTests(unittest.TestCase):
+    def _seed_two_months(self, db):
+        _seed_accepted(db, "2606.00001", "June Paper", "2026-06-04")
+        _seed_accepted(db, "2605.00002", "May Paper", "2026-05-29")
+
+    def test_groups_days_into_month_tabs_with_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            self._seed_two_months(db)
+            resp = _client(db, ["ai safety"]).get("/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Browse by month", resp.text)
+        # apostrophe in "JUN '26" is HTML-escaped by Jinja -> "JUN &#39;26"
+        self.assertIn("JUN", resp.text)
+        self.assertIn("MAY", resp.text)
+        # default month = newest day's month (June); summary reflects that month.
+        self.assertIn("1 days · 1 papers", resp.text)
+
+    def test_default_month_grid_shows_only_newest_months_days(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            self._seed_two_months(db)
+            resp = _client(db, ["ai safety"]).get("/")
+        # June is default: its day chip (04) renders; May's day (29) does not.
+        self.assertIn(">04</div>", resp.text)
+        self.assertNotIn(">29</div>", resp.text)
+
+    def test_month_param_switches_day_grid_without_changing_loaded_day(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
+            db.initialize()
+            self._seed_two_months(db)
+            resp = _client(db, ["ai safety"]).get("/", params={"month": "2026-05"})
+        # grid now shows May's day (29); loaded papers stay on the newest day (June).
+        self.assertIn(">29</div>", resp.text)
+        self.assertIn("June Paper", resp.text)
+        self.assertNotIn("May Paper", resp.text)
+
+
 class WebRouteTests(unittest.TestCase):
     def test_home_shows_latest_day_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -124,7 +200,7 @@ class WebRouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("A jailbreak attack study", resp.text)
         self.assertNotIn("Unrelated topic", resp.text)
-        self.assertIn("kết quả cho", resp.text)
+        self.assertIn("matching", resp.text)
 
     def test_search_no_results_shows_empty_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -133,7 +209,7 @@ class WebRouteTests(unittest.TestCase):
             _seed_accepted(db, "2606.00001", "Some paper", "2026-06-04")
             resp = _client(db, ["ai safety"]).get("/", params={"q": "zzzznomatch"})
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("Không có kết quả", resp.text)
+        self.assertIn("No papers match", resp.text)
 
     def test_date_shows_separate_set_and_total_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,10 +219,9 @@ class WebRouteTests(unittest.TestCase):
             _seed_accepted(db, "2606.00002", "Unrelated paper", "2026-06-05")
             resp = _client(db, ["jailbreak"]).get("/")
         self.assertEqual(resp.status_code, 200)
-        # AI Safety badge (riêng) = 1, total badge (chung) = 2 for the day.
-        self.assertIn('title="AI Safety"', resp.text)
-        self.assertIn('dark:text-amber-300">1</span>', resp.text)
-        self.assertIn('dark:text-zinc-400">2</span>', resp.text)
+        # Day chip shows "in-scope / total" = "1/2"; standfirst echoes the split.
+        self.assertIn(">1/2</div>", resp.text)
+        self.assertIn("1 in scope for AI safety", resp.text)
 
     def test_date_param_selects_that_day(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -200,9 +275,9 @@ class WebRouteTests(unittest.TestCase):
                 summary={"ideas_to_try": "1. First idea here 2. Second idea here 3. Third idea here"},
             )
             resp = _client(db, ["ai safety"]).get("/")
-        self.assertEqual(resp.text.count("<li>First idea here</li>"), 1)
-        self.assertEqual(resp.text.count("<li>Second idea here</li>"), 1)
-        self.assertEqual(resp.text.count("<li>Third idea here</li>"), 1)
+        self.assertEqual(resp.text.count(">First idea here</li>"), 1)
+        self.assertEqual(resp.text.count(">Second idea here</li>"), 1)
+        self.assertEqual(resp.text.count(">Third idea here</li>"), 1)
 
     def test_affiliations_from_summary_are_shown(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -219,10 +294,12 @@ class WebRouteTests(unittest.TestCase):
                 },
             )
             resp = _client(db, ["ai safety"]).get("/")
+        # Affiliations fold into the mono byline ("authors · org"), deduplicated,
+        # and render in the distinct `org` color to read apart from authors.
         self.assertIn("KAIST AI", resp.text)
         self.assertIn("EPFL", resp.text)
-        # deduplicated: "KAIST AI" rendered once
-        self.assertEqual(resp.text.count(">KAIST AI<"), 1)
+        self.assertEqual(resp.text.count("KAIST AI"), 1)
+        self.assertIn("text-org", resp.text)
 
     def test_unknown_topic_slug_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -269,7 +346,10 @@ class FilterSetRouteTests(unittest.TestCase):
         self.assertIn("A jailbreak study", resp.text)
         self.assertNotIn("A prompt injection attack", resp.text)
 
-    def test_tier2_keyword_chips_shown_only_when_set_selected(self):
+    def test_no_tier2_keyword_chips_in_ledger_design(self):
+        # The Ledger design drops the tier-2 keyword sub-filter chips; no keyword
+        # slug/href should appear in either view. (URL `topics` filtering is still
+        # honored server-side — see test_set_plus_keyword_intersection.)
         with tempfile.TemporaryDirectory() as tmp:
             db = PaperRadarDb(Path(tmp) / "radar.sqlite3")
             db.initialize()
@@ -277,9 +357,10 @@ class FilterSetRouteTests(unittest.TestCase):
             client = _client_sets(db, _two_sets())
             all_view = client.get("/").text
             set_view = client.get("/", params={"set": "computer-vision"}).text
-        # tier-2 chip for a CV keyword only appears once a CV set is selected
         self.assertNotIn("object-detection", all_view)
-        self.assertIn("object-detection", set_view)
+        self.assertNotIn("object-detection", set_view)
+        # the matching paper's topic still shows as an accent meta tag (label form)
+        self.assertIn("object detection", set_view)
 
     def test_unknown_set_slug_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:

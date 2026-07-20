@@ -2,162 +2,151 @@
 {% block title %}PaperSummarizer{% if selected_date %} · {{ selected_date }}{% endif %}{% endblock %}
 
 {% block content %}
-<header class="sticky top-0 z-10 border-b border-zinc-200 bg-white/85 backdrop-blur dark:border-zinc-800/80 dark:bg-zinc-950/85">
-  <div class="mx-auto max-w-5xl px-5 py-4">
-    <div class="flex items-baseline justify-between gap-2.5">
-      <div class="flex items-baseline gap-2.5">
-        <h1 class="text-base font-semibold tracking-tight text-zinc-900 dark:text-white">PaperSummarizer</h1>
-        <span class="text-xs text-zinc-500">AI safety &amp; LLM red-teaming feed</span>
+<article class="mx-auto max-w-[940px] px-[52px] pb-[56px] pt-[46px]">
+
+  {# ---- Masthead ---- #}
+  <header class="mb-2 border-b-2 border-ink pb-[18px]">
+    <div class="flex items-baseline justify-between gap-4">
+      <div class="font-mono text-[11px] font-semibold uppercase leading-none tracking-[0.24em] text-sub">AI Safety &amp; LLM Red-teaming</div>
+      <div class="flex items-baseline gap-3">
+        {% if masthead_date %}<span class="font-mono text-[11px] font-medium leading-none tracking-[0.1em] text-sub">{{ masthead_date }}</span>{% endif %}
+        <button onclick="toggleTheme()" aria-label="Toggle theme"
+                class="leading-none text-sub transition hover:text-ink">
+          <span class="dark:hidden">🌙</span><span class="hidden dark:inline">☀️</span>
+        </button>
       </div>
-      <button onclick="toggleTheme()" aria-label="Toggle theme"
-              class="rounded-lg p-2 text-zinc-500 ring-1 ring-inset ring-zinc-200 transition hover:text-zinc-800 dark:ring-zinc-800 dark:hover:text-zinc-200">
-        <span class="dark:hidden">🌙</span><span class="hidden dark:inline">☀️</span>
-      </button>
     </div>
+    <h1 class="mt-3 font-serif text-[40px] font-medium leading-none tracking-[-0.015em] text-ink">PaperSummarizer</h1>
+  </header>
 
-    <form method="get" action="/" class="mt-3.5 flex items-center gap-2">
-      <input type="search" name="q" value="{{ search_query or '' }}" placeholder="Tìm theo tiêu đề / abstract…"
-             class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[13px] text-zinc-800 placeholder:text-zinc-400 focus:border-orange-400 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100" />
-      <button type="submit" class="shrink-0 rounded-lg bg-orange-500 px-3.5 py-1.5 text-[13px] font-medium text-white transition hover:bg-orange-600">Tìm</button>
-      {% if search_query %}<a href="/" title="Xoá tìm kiếm" class="shrink-0 rounded-lg px-2 py-1.5 text-[13px] text-zinc-500 transition hover:text-zinc-800 dark:hover:text-zinc-200">✕</a>{% endif %}
-    </form>
-
-    <div class="mt-3 flex flex-wrap gap-2">
-      {% for s in set_links %}
-      <a href="{{ s.href }}"
-         class="rounded-full px-3.5 py-1.5 text-[13px] font-medium transition
-                {% if s.active %}bg-orange-500 text-white shadow-sm shadow-orange-500/30{% else %}bg-white text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:text-zinc-900 hover:ring-zinc-300 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:text-zinc-200 dark:hover:ring-zinc-700{% endif %}">
-        {{ s.label }}
-      </a>
-      {% endfor %}
-    </div>
-
-    {% if keyword_links %}
-    <div class="mt-2.5 flex flex-wrap items-center gap-1.5">
-      {% for k in keyword_links %}
-      <a href="{{ k.href }}" data-kw="{{ k.slug }}"
-         class="rounded-md px-2.5 py-1 text-xs transition
-                {% if k.active %}bg-orange-100 text-orange-700 ring-1 ring-inset ring-orange-300 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/40{% else %}text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:text-zinc-800 hover:ring-zinc-300 dark:ring-zinc-800/80 dark:hover:text-zinc-300 dark:hover:ring-zinc-700{% endif %}">
-        {{ k.label }}
-      </a>
-      {% endfor %}
-    </div>
+  {# ---- Standfirst ---- #}
+  <div class="border-b border-rule pb-[22px] pt-[14px] font-serif text-[15px] italic leading-[1.4] text-sub">
+    {% if search_query %}
+      {{ papers|length }} paper{{ "s" if papers|length != 1 }} matching “{{ search_query }}”
+    {% else %}
+      {{ papers|length }} paper{{ "s" if papers|length != 1 }} logged today · {{ in_scope }} in scope for AI safety
     {% endif %}
   </div>
-</header>
 
-<div class="mx-auto max-w-5xl gap-8 px-5 py-7 sm:flex">
-  <aside class="mb-6 w-full shrink-0 sm:mb-0 sm:w-40">
-    <h2 class="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-600">Days</h2>
-    <nav class="flex flex-row flex-wrap gap-1.5 sm:flex-col">
-      {% for d in date_links %}
-      <a href="{{ d.href }}"
-         class="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition
-                {% if d.active %}bg-zinc-100 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-white{% else %}text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-200{% endif %}">
-        <span>{{ d.date }}</span>
-        <span class="flex items-center gap-1">
-          <span title="AI Safety" class="rounded-full bg-amber-100 px-1.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">{{ d.set_count }}</span>
-          <span title="Tổng" class="rounded-full bg-zinc-100 px-1.5 text-[11px] text-zinc-500 dark:bg-zinc-800/90 dark:text-zinc-400">{{ d.count }}</span>
-        </span>
+  {# ---- Search row ---- #}
+  <form method="get" action="/" class="flex items-center gap-[14px] border-b border-rule py-[20px]">
+    <label for="q" class="font-mono text-[12px] font-semibold leading-none tracking-[0.12em] text-sub">FIND</label>
+    <input id="q" type="search" name="q" value="{{ search_query or '' }}" placeholder="title, author, tag…"
+           class="min-w-0 flex-1 border-0 border-b border-rule bg-transparent px-0.5 py-1 font-serif text-[18px] leading-[1.4] text-ink placeholder:text-sub focus:outline-none focus:ring-0" />
+    {% if search_query %}<a href="/" title="Clear search" class="font-mono text-[12px] leading-none text-sub transition hover:text-ink">✕</a>{% endif %}
+  </form>
+
+  {# ---- Filter tabs ---- #}
+  <div class="flex flex-wrap gap-2 pb-1 pt-[16px]">
+    {% for s in set_links %}
+    <a href="{{ s.href }}"
+       class="rounded-none border px-[13px] py-2 font-mono text-[11px] font-semibold uppercase leading-none tracking-[0.1em] transition
+              {% if s.active %}border-accent bg-accent text-bg{% else %}border-rule bg-transparent text-sub hover:text-ink{% endif %}">
+      {{ s.label }}
+    </a>
+    {% endfor %}
+  </div>
+
+  {# ---- Month navigator ---- #}
+  <div class="pt-[18px]">
+    <div class="mb-1 flex items-baseline justify-between gap-4">
+      <span class="font-mono text-[11px] font-semibold uppercase leading-none tracking-[0.14em] text-sub">Browse by month</span>
+      <span class="font-mono text-[11px] font-medium leading-none text-sub">{{ month_summary }}</span>
+    </div>
+    <div class="flex flex-wrap gap-[2px] border-b border-rule">
+      {% for m in month_tabs %}
+      <a href="{{ m.href }}"
+         class="flex flex-col items-start gap-[3px] border-b-2 px-[14px] pb-2 pt-[9px] transition
+                {% if m.active %}border-accent{% else %}border-transparent hover:border-rule{% endif %}">
+        <span class="font-mono text-[13px] font-semibold uppercase leading-none tracking-[0.06em] {% if m.active %}text-ink{% else %}text-sub{% endif %}">{{ m.label }}</span>
+        <span class="font-mono text-[10px] font-normal leading-none text-sub">{{ m.count }} papers</span>
+      </a>
+      {% endfor %}
+    </div>
+    <div class="flex flex-wrap gap-[6px] border-b border-rule py-[16px]">
+      {% for d in month_days %}
+      <a href="{{ d.href }}" title="{{ selected_month }}-{{ d.dd }}"
+         class="min-w-[52px] shrink-0 grow-0 rounded-[3px] border py-[7px] text-center transition
+                {% if d.active %}border-accent bg-accent text-bg{% else %}border-rule text-ink hover:border-accent{% endif %}">
+        <div class="font-mono text-[13px] font-semibold leading-none">{{ d.dd }}</div>
+        <div class="mt-[3px] font-mono text-[10px] leading-[1.3] opacity-70">{{ d.set_count }}/{{ d.count }}</div>
       </a>
       {% else %}
-      <p class="text-[13px] text-zinc-400 dark:text-zinc-600">No data yet</p>
+      <p class="py-2 font-serif text-[15px] italic text-sub">No data yet</p>
       {% endfor %}
-    </nav>
-  </aside>
+    </div>
+  </div>
 
-  <main class="min-w-0 flex-1">
-    {% if papers %}
-      {% if search_query %}
-      <p class="mb-4 text-[13px] text-zinc-500">{{ papers|length }} kết quả cho “{{ search_query }}”</p>
-      {% else %}
-      <p class="mb-4 text-[13px] text-zinc-500">{{ papers|length }} paper{{ "s" if papers|length != 1 }} · {{ selected_date }}</p>
-      {% endif %}
-      <div class="space-y-3.5">
-      {% for p in papers %}
-      <article class="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-zinc-300 dark:border-zinc-800/80 dark:bg-zinc-900/40 dark:shadow-none dark:hover:border-zinc-700/80">
-        <div class="flex items-start justify-between gap-4">
-          <h3 class="text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100 sm:text-base">
-            <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener"
-               class="transition hover:text-orange-600 dark:hover:text-orange-400">{{ p.title }}</a>
-          </h3>
-          <div class="flex shrink-0 gap-1.5 text-[11px] font-medium">
-            {% if search_query and p.published_at %}<span class="rounded-md bg-zinc-100 px-2 py-1 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="published">{{ p.published_at[:10] }}</span>{% endif %}
-            <span class="rounded-md bg-zinc-100 px-2 py-1 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="relevance">Rel {{ "%.0f"|format(p.relevance_score) }}</span>
-            <span class="rounded-md bg-zinc-100 px-2 py-1 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="idea">Idea {{ "%.0f"|format(p.idea_score) }}</span>
-            <span class="rounded-md bg-zinc-100 px-2 py-1 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="grounding">Gnd {{ "%.0f"|format(p.grounding_score) }}</span>
-          </div>
-        </div>
+  {# ---- Paper list ---- #}
+  {% for p in papers %}
+  {% set s = p.summary %}
+  <article class="border-b border-rule py-[26px]">
+    {# Meta row #}
+    <div class="flex flex-wrap items-center gap-[14px] font-mono text-[11px] font-medium uppercase leading-none tracking-[0.08em] text-sub">
+      {% for label, slug in p.topics %}<span class="text-accent">{{ label }}</span>{% endfor %}
+      <span>Rel {{ "%.0f"|format(p.relevance_score) }}</span>
+      <span>Idea {{ "%.0f"|format(p.idea_score) }}</span>
+      <span>Gnd {{ "%.0f"|format(p.grounding_score) }}</span>
+    </div>
 
-        {% if p.authors %}
-        <p class="mt-1.5 truncate text-[13px] text-zinc-500 dark:text-zinc-400">{{ p.authors|join(", ") }}</p>
-        {% endif %}
+    {# Title #}
+    <h3 class="mb-1 mt-[10px] font-serif text-[27px] font-medium leading-[1.12] tracking-[-0.01em] text-ink">
+      <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener" class="transition hover:text-accent">{{ p.title }}</a>
+    </h3>
 
-        {% if p.affiliations %}
-        <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-          {% for aff in p.affiliations %}
-          <span class="rounded-md bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800/70 dark:text-zinc-400">{{ aff }}</span>
-          {% endfor %}
-        </div>
-        {% endif %}
-
-        <div class="mt-3 flex flex-wrap gap-1.5">
-          {% for label, slug in p.topics %}
-          <span class="rounded-full bg-orange-50 px-2.5 py-0.5 text-[11px] font-medium text-orange-700 ring-1 ring-inset ring-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25">{{ label }}</span>
-          {% endfor %}
-        </div>
-
-        {% set s = p.summary %}
-        {% if s.what_the_paper_does %}
-        <p class="mt-3.5 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{{ s.what_the_paper_does }}</p>
-        {% endif %}
-
-        <details class="mt-3 group">
-          <summary class="inline-flex cursor-pointer select-none items-center gap-1 text-[13px] font-medium text-orange-600 transition hover:text-orange-500 dark:text-orange-400 dark:hover:text-orange-300">
-            <span class="transition group-open:rotate-90">›</span> Details
-          </summary>
-          <dl class="mt-3 space-y-3 border-l border-zinc-200 pl-4 text-sm dark:border-zinc-800">
-            {% for field, heading in [
-                ("novelty", "Novelty"),
-                ("method", "Method"),
-                ("results_claims", "Results"),
-                ("limitations_uncertainty", "Limitations")] %}
-              {% if s[field] %}
-              <div>
-                <dt class="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">{{ heading }}</dt>
-                <dd class="mt-0.5 leading-relaxed text-zinc-700 dark:text-zinc-300">{{ s[field] }}</dd>
-              </div>
-              {% endif %}
-            {% endfor %}
-            {% if p.ideas %}
-            <div>
-              <dt class="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Ideas to try</dt>
-              <dd class="mt-1">
-                <ul class="list-disc space-y-1 pl-4 leading-relaxed text-zinc-700 dark:text-zinc-300">
-                  {% for idea in p.ideas %}<li>{{ idea }}</li>{% endfor %}
-                </ul>
-              </dd>
-            </div>
-            {% endif %}
-          </dl>
-        </details>
-
-        <div class="mt-4 flex items-center gap-3 text-[13px]">
-          <a href="{{ p.reader_url }}" target="_blank" rel="noopener"
-             class="inline-flex items-center gap-1.5 rounded-lg bg-orange-500 px-3 py-1.5 font-medium text-white transition hover:bg-orange-600">
-            📖 Read PDF
-          </a>
-          <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-orange-600 dark:hover:text-orange-400">arXiv</a>
-          {% if p.pdf_url %}<a href="{{ p.pdf_url }}" target="_blank" rel="noopener" class="text-zinc-500 transition hover:text-orange-600 dark:hover:text-orange-400">PDF</a>{% endif %}
-        </div>
-      </article>
-      {% endfor %}
-      </div>
-    {% else %}
-      <div class="rounded-2xl border border-dashed border-zinc-300 p-16 text-center text-[13px] text-zinc-500 dark:border-zinc-800">
-        {% if search_query %}Không có kết quả cho “{{ search_query }}”.{% else %}No papers{% if selected_date %} for {{ selected_date }}{% endif %}.{% endif %}
-      </div>
+    {# Byline: authors · org #}
+    {% if p.authors %}
+    <div class="mb-[12px] font-mono text-[13px] leading-[1.4]"><span class="text-sub">{{ p.authors|join(", ") }}</span>{% if p.affiliations %}<span class="font-medium text-org"> · {{ p.affiliations|join(", ") }}</span>{% endif %}</div>
     {% endif %}
-  </main>
-</div>
+
+    {# Abstract #}
+    {% if s.what_the_paper_does %}
+    <p class="mb-[14px] hyphens-auto text-justify font-serif text-[18px] leading-[1.6] text-ink">{{ s.what_the_paper_does }}</p>
+    {% endif %}
+
+    {# Expandable details #}
+    {% set has_details = s.novelty or s.method or s.results_claims or s.limitations_uncertainty or p.ideas %}
+    {% if has_details %}
+    <details {% if loop.first %}open{% endif %} class="group">
+      <summary class="ledger-summary inline-block cursor-pointer select-none rounded-[2px] border border-rule px-[14px] py-2 font-mono text-[12px] font-semibold uppercase leading-none tracking-[0.1em] text-ink transition hover:border-accent">
+        <span class="ledger-more">Details</span><span class="ledger-less">Hide details</span>
+      </summary>
+      <div class="ledger-detail mt-[20px] grid grid-cols-2 gap-x-[34px] gap-y-[22px]">
+        {% for field, heading in [
+            ("novelty", "Novelty"),
+            ("method", "Method"),
+            ("results_claims", "Results"),
+            ("limitations_uncertainty", "Limitations")] %}
+          {% if s[field] %}
+          <div>
+            <div class="mb-[6px] font-mono text-[11px] font-semibold uppercase leading-none tracking-[0.14em] text-accent">{{ heading }}</div>
+            <p class="m-0 hyphens-auto text-justify font-serif text-[16px] leading-[1.5] text-ink">{{ s[field] }}</p>
+          </div>
+          {% endif %}
+        {% endfor %}
+        {% if p.ideas %}
+        <div class="col-span-2 rounded-[3px] border border-accent bg-ideabg px-[18px] py-[16px]">
+          <div class="mb-[10px] font-mono text-[11px] font-semibold uppercase leading-none tracking-[0.14em] text-accent">Ideas to try</div>
+          <ul class="m-0 columns-2 gap-x-[34px] pl-5">
+            {% for idea in p.ideas %}<li class="mb-[6px] break-inside-avoid font-serif text-[15px] leading-[1.55] text-ink">{{ idea }}</li>{% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
+
+    {# Links #}
+    <div class="mt-[16px] flex gap-[18px] font-mono text-[12px] font-medium leading-none tracking-[0.06em]">
+      <a href="{{ p.reader_url }}" target="_blank" rel="noopener" class="text-accent no-underline">📖 Read PDF</a>
+      <a href="https://arxiv.org/abs/{{ p.arxiv_id }}" target="_blank" rel="noopener" class="text-sub no-underline transition hover:text-accent">arXiv</a>
+    </div>
+  </article>
+  {% else %}
+  <div class="py-[40px] font-serif text-[18px] italic leading-[1.4] text-sub">
+    {% if search_query %}No papers match “{{ search_query }}”.{% else %}No papers{% if selected_date %} for {{ selected_date }}{% endif %}.{% endif %}
+  </div>
+  {% endfor %}
+
+</article>
 {% endblock %}
